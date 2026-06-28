@@ -20,9 +20,9 @@ export function SessionCard({ s, corner }: { s: SessionSummary; corner?: ReactNo
       </div>
       <div className="flex items-center gap-2">
         <AgentBadge agent={s.agent} />
-        {s.status !== 'active' && (
+        {s.status === 'archived' && (
           <span className="rounded px-1.5 py-0.5 text-[11px] text-text-faint ring-1 ring-border">
-            {s.status}
+            archived
           </span>
         )}
       </div>

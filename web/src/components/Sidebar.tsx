@@ -23,7 +23,7 @@ function groupByAgent(sessions: SessionSummary[]): [string, SessionSummary[]][] 
   return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
 }
 
-export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
+export function Sidebar({ onOpenSearch, onClose }: { onOpenSearch: () => void; onClose?: () => void }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => api.list(),
@@ -49,13 +49,24 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
           <FoundryMark size={22} />
           Foundry
         </Link>
-        <button
-          onClick={onOpenSearch}
-          className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[11px] text-text-faint hover:text-text-dim"
-          title="Search (⌘K)"
-        >
-          ⌘K
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onOpenSearch}
+            className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[11px] text-text-faint hover:text-text-dim"
+            title="Search (⌘K)"
+          >
+            ⌘K
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="rounded p-1 text-text-faint hover:bg-surface-2 hover:text-text"
+              title="Collapse sidebar"
+            >
+              ‹
+            </button>
+          )}
+        </div>
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">

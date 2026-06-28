@@ -41,7 +41,15 @@ export function Dashboard() {
   if (search.tag) all = all.filter((s) => s.tags.includes(search.tag!))
 
   const favorites = all.filter((s) => s.favorite)
-  const active = all.filter((s) => s.status === 'active')
+
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfWeek = new Date(startOfToday)
+  startOfWeek.setDate(startOfToday.getDate() - 7)
+
+  const today    = all.filter((s) => new Date(s.updated_at) >= startOfToday)
+  const thisWeek = all.filter((s) => { const d = new Date(s.updated_at); return d >= startOfWeek && d < startOfToday })
+  const earlier  = all.filter((s) => new Date(s.updated_at) < startOfWeek)
 
   const title = search.tag
     ? `#${search.tag}`
@@ -107,8 +115,9 @@ export function Dashboard() {
           ) : (
             <>
               <Rail title="Favorites" sessions={favorites} />
-              <Rail title="Active" sessions={active} />
-              <Rail title="Recent" sessions={all} />
+              <Rail title="Today" sessions={today} />
+              <Rail title="This week" sessions={thisWeek} />
+              <Rail title="Earlier" sessions={earlier} />
             </>
           )}
         </>

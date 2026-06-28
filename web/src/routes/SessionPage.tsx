@@ -43,24 +43,28 @@ export function SessionPage() {
           <FavoriteButton id={s.id} favorite={s.favorite} />
           <AgentBadge agent={s.agent} />
           {/* version timeline */}
-          <div className="flex items-center gap-1">
-            {versions.map((v) => {
-              const cur = (version ?? s.version) === v
-              return (
-                <button
-                  key={v}
-                  onClick={() => {
-                    setVersion(v)
-                    setSelected(0)
-                  }}
-                  className={`rounded px-2 py-0.5 font-mono text-xs ${
-                    cur ? 'bg-accent text-white' : 'text-text-dim hover:bg-surface-2'
-                  }`}
-                >
-                  v{v}
-                </button>
-              )
-            })}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-text-faint">Version</span>
+            <div className="relative flex items-center">
+              <select
+                value={s.requested_version}
+                onChange={(e) => {
+                  const val = Number(e.target.value)
+                  setVersion(val)
+                  setSelected(0)
+                }}
+                className="appearance-none rounded-md border border-border bg-surface pl-2.5 pr-7 py-1 font-mono text-xs text-text-dim hover:text-text hover:bg-surface-2 focus:border-accent focus:outline-none cursor-pointer"
+              >
+                {versions.map((v) => (
+                  <option key={v} value={v}>
+                    v{v} {v === s.version ? '(latest)' : ''}
+                  </option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-text-faint">
+                ▼
+              </span>
+            </div>
           </div>
         </div>
       </header>
