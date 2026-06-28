@@ -1,12 +1,12 @@
 // Agent visual identity. Each agent gets a stable color + short label.
 const MAP: Record<string, { label: string; color: string }> = {
   'claude-code': { label: 'Claude Code', color: 'var(--color-agent-claude)' },
-  claude: { label: 'Claude', color: 'var(--color-agent-claude)' },
   codex: { label: 'Codex', color: 'var(--color-agent-codex)' },
   'codex-cli': { label: 'Codex CLI', color: 'var(--color-agent-codex)' },
   opencode: { label: 'OpenCode', color: 'var(--color-agent-opencode)' },
   cursor: { label: 'Cursor', color: 'var(--color-agent-cursor)' },
   aider: { label: 'Aider', color: 'var(--color-agent-aider)' },
+  manual: { label: 'Manual', color: 'var(--color-text-dim)' },
 }
 
 export function agentMeta(agent: string): { label: string; color: string } {
@@ -24,6 +24,15 @@ export function relativeTime(iso: string): string {
   if (h < 24) return `${h}h ago`
   const d = Math.round(h / 24)
   return `${d}d ago`
+}
+
+export function formatDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
 }
 
 export function formatBytes(n: number): string {

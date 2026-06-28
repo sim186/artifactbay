@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Thin wrapper so any agent/shell can call `foundry push` / `foundry doctor`.
-# Symlink onto PATH:   ln -s "$PWD/integrations/foundry" /usr/local/bin/foundry
-# Then: foundry doctor | foundry push --name "..."
+# Thin wrapper so any agent/shell can call `artifactbay push` / `artifactbay doctor`.
+# Symlink onto PATH:   ln -s "$PWD/integrations/artifactbay" /usr/local/bin/artifactbay
+# Then: artifactbay doctor | artifactbay push --name "..."
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$HERE/foundry_cli.py" "$@"
+exec python3 "$HERE/artifactbay_cli.py" "$@"

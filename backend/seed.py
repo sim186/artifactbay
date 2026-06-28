@@ -6,7 +6,7 @@ import sys
 import httpx
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8009"
-KEY = "fdy_dev_changeme"
+KEY = "ab_dev_changeme"
 H = {"Authorization": f"Bearer {KEY}"}
 
 ARCH_HTML = """<!doctype html><html><head><meta charset=utf-8>

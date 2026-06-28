@@ -1,4 +1,4 @@
-"""Foundry API entrypoint."""
+"""ArtifactBay API entrypoint."""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Foundry", version="0", lifespan=lifespan)
+app = FastAPI(title="ArtifactBay", version="0", lifespan=lifespan)
 
 # Frontend SPA (Vite dev server) talks to this API cross-origin in dev.
 # allow_credentials=True so the session cookie flows; origins must be explicit (not "*").

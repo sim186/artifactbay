@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 
 export type Theme = 'dark' | 'light'
-const KEY = 'foundry.theme'
+const KEY = 'artifactbay.theme'
 
 export function readTheme(): Theme {
   return (localStorage.getItem(KEY) as Theme) || 'dark'

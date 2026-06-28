@@ -1,1 +1,1 @@
-"""Foundry backend — session artifact repository API."""
+"""ArtifactBay backend — session artifact repository API."""

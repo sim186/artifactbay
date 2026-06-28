@@ -2,7 +2,7 @@
 
 Two principals can authenticate a request:
 - a **user** via JWT in an httpOnly cookie (the web UI), or
-- an **API key** via `Authorization: Bearer fdy_...` (agents).
+- an **API key** via `Authorization: Bearer ab_...` (agents).
 
 Write endpoints accept either. Reads are gated by visibility (public = anon ok).
 """
@@ -41,7 +41,7 @@ def hash_token(token: str) -> str:
 
 
 def new_api_token() -> str:
-    return "fdy_" + secrets.token_urlsafe(32)
+    return "ab_" + secrets.token_urlsafe(32)
 
 
 def make_jwt(user: User) -> str:

@@ -82,7 +82,7 @@ def me(p: Principal = Depends(require_user), db: DBSession = Depends(get_session
 
 @router.get("/check")
 def check(p: Principal = Depends(require_writer)) -> dict:
-    # Cheap authed ping for `foundry doctor` — validates a write key or session.
+    # Cheap authed ping for `artifactbay doctor` — validates a write key or session.
     return {"ok": True, "kind": p.kind, "scope": p.scope.value if p.scope else "user"}
 
 

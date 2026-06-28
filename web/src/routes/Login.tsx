@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ApiError } from '../api'
-import { FoundryMark } from '../components/Logo'
+import { ArtifactBayMark } from '../components/Logo'
 
 export function Login() {
   const [username, setUsername] = useState('')
@@ -26,10 +26,10 @@ export function Login() {
         className="w-80 rounded-xl border border-border bg-surface p-6"
       >
         <div className="mb-1 flex items-center gap-2.5">
-          <FoundryMark size={32} />
-          <span className="text-lg font-semibold tracking-tight">Foundry</span>
+          <ArtifactBayMark size={32} />
+          <span className="text-lg font-semibold tracking-tight">ArtifactBay</span>
         </div>
-        <p className="mb-5 text-xs text-text-faint">Sign in to your session repository.</p>
+        <p className="mb-5 text-xs text-text-faint">The persistent home for AI agent artifacts — store, search, showcase.</p>
 
         <label className="mb-1 block text-xs text-text-dim">Username</label>
         <input

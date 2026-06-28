@@ -5,22 +5,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="FOUNDRY_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="ARTIFACTBAY_", env_file=".env", extra="ignore")
 
-    # SQLite for instant local dev; swap to Postgres via FOUNDRY_DATABASE_URL.
-    # e.g. postgresql+psycopg://user:pass@localhost/foundry
-    database_url: str = "sqlite:///./foundry.db"
+    # SQLite for instant local dev; swap to Postgres via ARTIFACTBAY_DATABASE_URL.
+    # e.g. postgresql+psycopg://user:pass@localhost/artifactbay
+    database_url: str = "sqlite:///./artifactbay.db"
 
     base_url: str = "http://localhost:8000"
 
     # Bootstrap API key: seeded as a real (hashed) ApiKey row on startup so existing
     # agents/CLI keep working. Set empty to disable.
-    api_key: str = "fdy_dev_changeme"
+    api_key: str = "ab_dev_changeme"
 
     # Auth. CHANGE jwt_secret + admin_password in real deploys.
     jwt_secret: str = "dev-insecure-change-me-please-32byte-minimum"
     jwt_ttl_hours: int = 720
-    cookie_name: str = "foundry_session"
+    cookie_name: str = "artifactbay_session"
     cookie_secure: bool = False  # True behind HTTPS
     admin_username: str = "admin"
     admin_password: str = "admin"

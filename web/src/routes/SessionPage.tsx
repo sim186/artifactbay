@@ -6,12 +6,14 @@ import { AddToCollection } from '../components/AddToCollection'
 import { AgentBadge } from '../components/AgentBadge'
 import { ArtifactViewer } from '../components/ArtifactViewer'
 import { FavoriteButton } from '../components/FavoriteButton'
+import { ProvenancePanel } from '../components/ProvenancePanel'
 import { formatBytes } from '../lib/agent'
 
 export function SessionPage() {
   const { sessionId } = useParams({ from: '/s/$sessionId' })
   const [version, setVersion] = useState<number | undefined>(undefined)
   const [selected, setSelected] = useState(0)
+  const [showInfo, setShowInfo] = useState(true)
 
   const { data: s, isLoading, error } = useQuery({
     queryKey: ['session', sessionId, version],
@@ -39,6 +41,17 @@ export function SessionPage() {
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3">
+          <button
+            onClick={() => setShowInfo((v) => !v)}
+            className={`rounded-md border px-2.5 py-1 text-xs ${
+              showInfo
+                ? 'border-accent/40 bg-accent-soft text-text'
+                : 'border-border text-text-dim hover:bg-surface-2 hover:text-text'
+            }`}
+            title="Toggle provenance panel"
+          >
+            ⓘ Details
+          </button>
           <AddToCollection sessionId={s.id} />
           <FavoriteButton id={s.id} favorite={s.favorite} />
           <AgentBadge agent={s.agent} />
@@ -100,6 +113,8 @@ export function SessionPage() {
             </div>
           )}
         </div>
+
+        {showInfo && <ProvenancePanel s={s} />}
       </div>
     </div>
   )

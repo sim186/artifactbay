@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearch } from '@tanstack/react-router'
+import { useState } from 'react'
 import { api, type ListParams, type SessionSummary } from '../api'
+import { ImportSession } from '../components/ImportSession'
 import { SessionCard } from '../components/SessionCard'
 import { agentMeta } from '../lib/agent'
 
@@ -24,6 +26,7 @@ export function Dashboard() {
   const search = useSearch({ from: '/' })
   const filtered = !!(search.agent || search.favorite || search.tag || search.q)
   const qc = useQueryClient()
+  const [importing, setImporting] = useState(false)
   const saveCollection = useMutation({
     mutationFn: (name: string) => api.createCollection(name, search as ListParams),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['collections'] }),
@@ -72,27 +75,37 @@ export function Dashboard() {
               : 'AI-generated development sessions and their artifacts.'}
           </p>
         </div>
-        {filtered && (
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={() => {
-                const name = window.prompt('Save this view as a collection named:')
-                if (name) saveCollection.mutate(name)
-              }}
-              className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:bg-surface-2 hover:text-text"
-            >
-              ◆ Save as collection
-            </button>
-            <Link
-              to="/"
-              search={{}}
-              className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:bg-surface-2 hover:text-text"
-            >
-              Clear filter ✕
-            </Link>
-          </div>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {filtered && (
+            <>
+              <button
+                onClick={() => {
+                  const name = window.prompt('Save this view as a collection named:')
+                  if (name) saveCollection.mutate(name)
+                }}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:bg-surface-2 hover:text-text"
+              >
+                ◆ Save as collection
+              </button>
+              <Link
+                to="/"
+                search={{}}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-text-dim hover:bg-surface-2 hover:text-text"
+              >
+                Clear filter ✕
+              </Link>
+            </>
+          )}
+          <button
+            onClick={() => setImporting(true)}
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+          >
+            + Import
+          </button>
+        </div>
       </header>
+
+      {importing && <ImportSession onClose={() => setImporting(false)} />}
 
       {isLoading && <p className="text-sm text-text-faint">Loading…</p>}
       {error && (

@@ -1,3 +1,18 @@
 backend/README.md
 docs/*.md
 web/README.md
+.artifactbay/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Editor / OS
+.vscode/
+.DS_Store

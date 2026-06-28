@@ -107,4 +107,6 @@ class SessionOut(BaseModel):
     visibility: str
     version: int
     requested_version: int
+    created_at: str
+    updated_at: str
     artifacts: list[ArtifactOut]

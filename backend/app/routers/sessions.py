@@ -235,6 +235,7 @@ def get_session_detail(
         git=GitInfo(repository=sess.git_repository, branch=sess.git_branch, commit=sess.git_commit),
         tags=sess.tags, favorite=sess.favorite, visibility=sess.visibility.value,
         version=sess.version, requested_version=req_ver,
+        created_at=sess.created_at.isoformat(), updated_at=sess.updated_at.isoformat(),
         artifacts=[
             ArtifactOut(id=a.id, name=a.name, type=a.type, size_bytes=a.size_bytes,
                         allow_scripts=a.allow_scripts, url=_artifact_url(a.id))

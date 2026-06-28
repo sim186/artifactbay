@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Foundry push CLI — the agent integration engine (FAIP v0, see docs/02).
+"""ArtifactBay push CLI — the agent integration engine (FAIP v0, see docs/02).
 
 Stdlib only: no pip install, drops into any agent's shell. Subcommands:
 
   doctor                 check connectivity + auth + what would be pushed
-  push   [--name NAME]    package .foundry/artifacts + git context, POST to Foundry
-         [--resume]       retry any queued pushes in .foundry/pending/
+  push   [--name NAME]    package .artifactbay/artifacts + git context, POST to ArtifactBay
+         [--resume]       retry any queued pushes in .artifactbay/pending/
          [--dry-run]      print the payload, don't send
 
 Config (env):
-  FOUNDRY_URL            default http://localhost:8080
-  FOUNDRY_KEY            write API key (required to push)
-  FOUNDRY_ARTIFACTS_DIR  default .foundry/artifacts
-  FOUNDRY_PROJECT        optional project name
+  ARTIFACTBAY_URL            default http://localhost:8080
+  ARTIFACTBAY_KEY            write API key (required to push)
+  ARTIFACTBAY_ARTIFACTS_DIR  default .artifactbay/artifacts
+  ARTIFACTBAY_PROJECT        optional project name
 
 Design: idempotent (Idempotency-Key), fail-open (never crash the agent),
-versions automatically (remembers .foundry/session_id).
+versions automatically (remembers .artifactbay/session_id).
 """
 from __future__ import annotations
 
@@ -43,11 +43,11 @@ C_OK, C_ERR, C_DIM, C_RST = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
 
 def cfg() -> dict:
     return {
-        "url": os.environ.get("FOUNDRY_URL", "http://localhost:8080").rstrip("/"),
-        "key": os.environ.get("FOUNDRY_KEY", ""),
-        "artifacts_dir": Path(os.environ.get("FOUNDRY_ARTIFACTS_DIR", ".foundry/artifacts")),
-        "project": os.environ.get("FOUNDRY_PROJECT") or None,
-        "state_dir": Path(".foundry"),
+        "url": os.environ.get("ARTIFACTBAY_URL", "http://localhost:8080").rstrip("/"),
+        "key": os.environ.get("ARTIFACTBAY_KEY", ""),
+        "artifacts_dir": Path(os.environ.get("ARTIFACTBAY_ARTIFACTS_DIR", ".artifactbay/artifacts")),
+        "project": os.environ.get("ARTIFACTBAY_PROJECT") or None,
+        "state_dir": Path(".artifactbay"),
     }
 
 
@@ -85,9 +85,9 @@ def collect_artifacts(d: Path) -> list[dict]:
     arts: list[dict] = []
     if not d.is_dir():
         return arts
-    # Opt-in: HTML files matching any glob in FOUNDRY_ALLOW_SCRIPTS get allow_scripts=true
+    # Opt-in: HTML files matching any glob in ARTIFACTBAY_ALLOW_SCRIPTS get allow_scripts=true
     # (needed for interactive artifacts like slide decks). Default: scripts disabled.
-    allow_globs = [g.strip() for g in os.environ.get("FOUNDRY_ALLOW_SCRIPTS", "").split(",") if g.strip()]
+    allow_globs = [g.strip() for g in os.environ.get("ARTIFACTBAY_ALLOW_SCRIPTS", "").split(",") if g.strip()]
     for p in sorted(d.rglob("*")):
         if not p.is_file():
             continue
@@ -116,18 +116,18 @@ def build_payload(c: dict, name: str | None) -> dict:
     default_name = name or git("log", "-1", "--pretty=%s") or Path.cwd().name
     return {
         "name": default_name,
-        "agent": os.environ.get("FOUNDRY_AGENT", "claude-code"),
-        "model": os.environ.get("FOUNDRY_MODEL"),
+        "agent": os.environ.get("ARTIFACTBAY_AGENT", "claude-code"),
+        "model": os.environ.get("ARTIFACTBAY_MODEL"),
         "project": c["project"] or (Path(repo).stem or None if repo else None),
         "git": g,
-        "tags": [t for t in os.environ.get("FOUNDRY_TAGS", "").split(",") if t],
+        "tags": [t for t in os.environ.get("ARTIFACTBAY_TAGS", "").split(",") if t],
         "artifacts": arts,
     }
 
 
 # ── commands ────────────────────────────────────────────────────────────────
 def cmd_doctor(c: dict) -> int:
-    print(f"Foundry: {c['url']}")
+    print(f"ArtifactBay: {c['url']}")
     try:
         _, meta = _req("GET", f"{c['url']}/v0/meta")
         print(f"  {C_OK}✓{C_RST} reachable (api v{meta.get('version')})")
@@ -135,7 +135,7 @@ def cmd_doctor(c: dict) -> int:
         print(f"  {C_ERR}✗ unreachable{C_RST} — {e}")
         return 1
     if not c["key"]:
-        print(f"  {C_ERR}✗ FOUNDRY_KEY not set{C_RST}")
+        print(f"  {C_ERR}✗ ARTIFACTBAY_KEY not set{C_RST}")
         return 1
     try:
         _req("GET", f"{c['url']}/v0/auth/check", key=c["key"])
@@ -203,7 +203,7 @@ def cmd_push(c: dict, name: str | None, dry: bool, resume: bool) -> int:
         print(json.dumps(preview, indent=2))
         return 0
     if not c["key"]:
-        print(f"{C_ERR}FOUNDRY_KEY not set{C_RST} — run `doctor`")
+        print(f"{C_ERR}ARTIFACTBAY_KEY not set{C_RST} — run `doctor`")
         return 1
 
     idem = uuid.uuid4().hex
@@ -218,7 +218,7 @@ def cmd_push(c: dict, name: str | None, dry: bool, resume: bool) -> int:
 
 
 def main(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="foundry")
+    p = argparse.ArgumentParser(prog="artifactbay")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor")
     pp = sub.add_parser("push")

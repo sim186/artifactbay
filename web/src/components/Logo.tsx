@@ -1,14 +1,13 @@
 /**
- * Foundry brand mark — "Molten Ember".
- * Cool indigo vault (the repository) + molten lava F (the freshly-forged artifact).
- * Gradient ids are namespaced so multiple instances never collide.
+ * ArtifactBay brand mark — "Container Bay".
+ * Two stacked containers (the artifacts) berthed between dock posts over a
+ * waterline — store, ship, retrieve. Indigo + teal on a dark tile.
+ * Gradient/filter ids are namespaced so multiple instances never collide.
  */
-export function FoundryMark({ size = 24, glow = true, className = '' }: { size?: number; glow?: boolean; className?: string }) {
-  // unique-enough suffix so two marks on one page don't share <defs> ids
+export function ArtifactBayMark({ size = 24, glow = true, className = '' }: { size?: number; glow?: boolean; className?: string }) {
   const uid = glow ? 'g' : 'p'
-  const tile = `fdy-tile-${uid}`
-  const lava = `fdy-lava-${uid}`
-  const heat = `fdy-heat-${uid}`
+  const tile = `ab-tile-${uid}`
+  const blur = `ab-glow-${uid}`
   return (
     <svg
       width={size}
@@ -16,44 +15,33 @@ export function FoundryMark({ size = 24, glow = true, className = '' }: { size?:
       viewBox="0 0 100 100"
       className={className}
       role="img"
-      aria-label="Foundry"
+      aria-label="ArtifactBay"
     >
       <defs>
         <linearGradient id={tile} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#1d2233" />
           <stop offset="1" stopColor="#10131c" />
         </linearGradient>
-        <linearGradient id={lava} x1="0.08" y1="0" x2="0.5" y2="1">
-          <stop offset="0" stopColor="#ffc24f" />
-          <stop offset="0.38" stopColor="#ff8a2e" />
-          <stop offset="0.72" stopColor="#ec4a0d" />
-          <stop offset="1" stopColor="#8f2009" />
-        </linearGradient>
         {glow && (
-          <filter id={heat} x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="4.5" />
+          <filter id={blur} x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3.5" />
           </filter>
         )}
       </defs>
-      <rect x="6" y="6" width="88" height="88" rx="26" fill={`url(#${tile})`} stroke="#6366f1" strokeWidth="2.4" />
+      <rect x="6" y="6" width="88" height="88" rx="26" fill={`url(#${tile})`} stroke="#5b8cff" strokeWidth="2.4" />
+      {/* dock posts */}
+      <path d="M27 34V66M73 34V66" stroke="#9aa6bd" strokeWidth="3" strokeLinecap="round" opacity="0.55" />
       {glow && (
-        <path
-          d="M40 30 H66 M40 30 V74 M40 51 H60"
-          fill="none"
-          stroke={`url(#${lava})`}
-          strokeWidth="9.5"
-          strokeLinecap="round"
-          filter={`url(#${heat})`}
-          opacity="0.55"
-        />
+        <g filter={`url(#${blur})`} opacity="0.5">
+          <rect x="32" y="53" width="36" height="13" rx="3" fill="#5b8cff" />
+          <rect x="32" y="38" width="36" height="13" rx="3" fill="#36d6c3" />
+        </g>
       )}
-      <path
-        d="M40 30 H66 M40 30 V74 M40 51 H60"
-        fill="none"
-        stroke={`url(#${lava})`}
-        strokeWidth="9.5"
-        strokeLinecap="round"
-      />
+      {/* stacked containers (artifacts in the berth) */}
+      <rect x="32" y="53" width="36" height="13" rx="3" fill="#5b8cff" />
+      <rect x="32" y="38" width="36" height="13" rx="3" fill="#36d6c3" />
+      {/* waterline / dock */}
+      <path d="M22 72H78" stroke="#5b8cff" strokeWidth="5" strokeLinecap="round" />
     </svg>
   )
 }

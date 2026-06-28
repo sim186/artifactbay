@@ -5,7 +5,7 @@ import { useAuth } from '../auth'
 import { agentMeta } from '../lib/agent'
 import { STATIC_COLLECTIONS } from '../lib/collections'
 import { useTheme } from '../theme'
-import { FoundryMark } from './Logo'
+import { ArtifactBayMark } from './Logo'
 
 function topTags(sessions: SessionSummary[], n = 6): string[] {
   const counts = new Map<string, number>()
@@ -46,8 +46,8 @@ export function Sidebar({ onOpenSearch, onClose }: { onOpenSearch: () => void; o
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-border bg-surface">
       <div className="flex items-center justify-between px-4 py-3">
         <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight">
-          <FoundryMark size={22} />
-          Foundry
+          <ArtifactBayMark size={22} />
+          ArtifactBay
         </Link>
         <div className="flex items-center gap-1">
           <button

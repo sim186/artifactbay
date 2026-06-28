@@ -7,20 +7,20 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: foundry-db
+    container_name: artifactbay-db
     environment:
-      POSTGRES_USER: foundry
-      POSTGRES_PASSWORD: foundry
-      POSTGRES_DB: foundry
+      POSTGRES_USER: artifactbay
+      POSTGRES_PASSWORD: artifactbay
+      POSTGRES_DB: artifactbay
     ports:
       - "5432:5432"
     volumes:
-      - foundry-pgdata:/var/lib/postgresql/data
+      - artifactbay-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U foundry -d foundry"]
+      test: ["CMD-SHELL", "pg_isready -U artifactbay -d artifactbay"]
       interval: 5s
       timeout: 3s
       retries: 10
 
 volumes:
-  foundry-pgdata:
+  artifactbay-pgdata:

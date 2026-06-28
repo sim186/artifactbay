@@ -113,7 +113,7 @@ class User(SQLModel, table=True):
 class ApiKey(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     key_hash: str = Field(index=True, unique=True)
-    prefix: str  # first chars of the token, for display (e.g. "fdy_ab12")
+    prefix: str  # first chars of the token, for display (e.g. "ab_ab12")
     label: str = ""
     scope: Scope = Field(default=Scope.write)
     user_id: str | None = Field(default=None, foreign_key="user.id")

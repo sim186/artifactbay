@@ -1,4 +1,4 @@
-// Typed client for the Foundry v0 API. Mirrors backend/app/schemas.py.
+// Typed client for the ArtifactBay v0 API. Mirrors backend/app/schemas.py.
 // Dev: requests go to same-origin /v0 (Vite proxies to :8000).
 
 export type ArtifactType =
@@ -33,7 +33,37 @@ export interface SessionOut {
   visibility: string
   version: number
   requested_version: number
+  created_at: string
+  updated_at: string
   artifacts: ArtifactOut[]
+}
+
+export interface ArtifactIn {
+  name: string
+  type: ArtifactType
+  encoding: 'utf8' | 'base64'
+  content: string
+  allow_scripts?: boolean
+}
+
+export interface SessionIn {
+  name: string
+  description?: string | null
+  agent: string
+  model?: string | null
+  project?: string | null
+  git?: GitInfo | null
+  tags?: string[]
+  visibility?: string
+  favorite?: boolean
+  artifacts: ArtifactIn[]
+}
+
+export interface CreateSessionOut {
+  id: string
+  version: number
+  url: string
+  artifacts: { id: string; name: string; url: string }[]
 }
 
 export interface ArtifactDetail extends ArtifactOut {
@@ -145,6 +175,8 @@ export const api = {
     req<SessionSummary>('PATCH', `/v0/sessions/${id}`, { favorite }),
   session: (id: string, version?: number) =>
     get<SessionOut>(`/v0/sessions/${id}${version ? `?version=${version}` : ''}`),
+  createSession: (payload: SessionIn) =>
+    req<CreateSessionOut>('POST', '/v0/sessions', payload),
   artifactMeta: (id: string) => get<ArtifactDetail>(`/v0/artifacts/${id}/meta`),
   // Raw + sandboxed-view URLs are plain paths (used as <a>/<iframe> src).
   artifactRaw: (id: string) => `/v0/artifacts/${id}`,

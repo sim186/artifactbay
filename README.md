@@ -1,15 +1,29 @@
-# Foundry &nbsp;<img src="web/public/favicon.svg" alt="" height="28" align="absmiddle" />
+# ArtifactBay &nbsp;<img src="web/public/favicon.svg" alt="" height="28" align="absmiddle" />
 
-Foundry is a **session-centric artifact repository** designed specifically for AI coding agents. It enables agents to push high-fidelity coding artifacts (such as HTML, markdown, SVG/PNG, PDFs, JSON, and chat logs) via a simple REST API, while giving human developers a polished, responsive dashboard to browse, search, and securely view these artifacts.
+> **The persistent home for AI agent artifacts — store, search, showcase.**
+
+ArtifactBay is a **session-centric artifact repository** designed specifically for AI coding agents. It enables agents to push high-fidelity coding artifacts (such as HTML, markdown, SVG/PNG, PDFs, JSON, and chat logs) via a simple REST API, while giving human developers a polished, responsive dashboard to browse, search, and securely view these artifacts.
+
+**Why it exists:** agents increasingly emit rich, interactive HTML — diffs, dashboards, call graphs, slide decks — that markdown flattens and chat windows discard. ArtifactBay gives that output a durable address: pushed once, versioned automatically, searchable forever, and rendered safely.
+
+## ✨ Features
+
+- **One-command push** — any agent drops files in `.artifactbay/artifacts/` and runs `artifactbay push`. Idempotent and fail-open (never blocks the agent).
+- **Automatic versioning** — re-pushing the same session snapshots a new version; nothing is overwritten.
+- **Full-text search** — find sessions by title, content, agent, model, or tags.
+- **Safe rendering** — untrusted HTML runs in a sandboxed, cross-origin `<iframe>` under a strict CSP; scripts are off unless explicitly opted in.
+- **Content-addressed storage** — blobs deduped by SHA-256 with reference-counted garbage collection.
+- **Collections** — group sessions into saved searches or manual pins.
+- **Agent integrations** — drop-in shims for Claude Code, Codex, Cursor, Aider, and OpenCode.
 
 ---
 
 ## 🏗️ System Architecture & Layout
 
-Foundry is organized as a decoupled monorepo:
+ArtifactBay is organized as a decoupled monorepo:
 
 ```
-foundry/
+artifactbay/
 ├── docs/                     # Specifications (v0 API contract, agent protocols)
 ├── backend/                  # Python + FastAPI + SQLModel backend service
 │   ├── app/                  # Main application package (routers, auth, store, models)
@@ -48,20 +62,20 @@ sequenceDiagram
 To spin up the entire production-like environment (Postgres database, FastAPI backend, and Nginx reverse proxy serving the frontend):
 ```bash
 # Build and launch all services in detached mode
-docker compose -p foundry-full -f docker-compose.full.yml up --build -d
+docker compose -p artifactbay-full -f docker-compose.full.yml up --build -d
 
 # The web dashboard is accessible at: http://localhost:8080
 ```
-*Note: Use `-p foundry-full` so it doesn't collide with any local dev docker projects.*
+*Note: Use `-p artifactbay-full` so it doesn't collide with any local dev docker projects.*
 
 To seed the active stack with demo data:
 ```bash
-docker compose -p foundry-full -f docker-compose.full.yml run --rm backend python seed.py http://localhost:8080
+docker compose -p artifactbay-full -f docker-compose.full.yml run --rm backend python seed.py http://localhost:8080
 ```
 
 To tear down:
 ```bash
-docker compose -p foundry-full -f docker-compose.full.yml down -v
+docker compose -p artifactbay-full -f docker-compose.full.yml down -v
 ```
 
 ### 2. Local Native Development
@@ -85,13 +99,46 @@ For a fast inner-loop dev experience with hot-reloading:
 
 ---
 
+## 🤖 Pushing Artifacts From Your Agent
+
+The whole point: let an agent save its output in one step. The engine is a stdlib-only Python CLI (`integrations/artifactbay_cli.py`), wrapped as `artifactbay` on your `PATH`.
+
+```bash
+# 1. Point the CLI at your instance (keep the key in your env, never commit it)
+export ARTIFACTBAY_URL=http://localhost:8080
+export ARTIFACTBAY_KEY=ab_...
+
+# 2. Drop anything worth keeping into the artifacts dir
+mkdir -p .artifactbay/artifacts
+cp report.html architecture.svg .artifactbay/artifacts/
+
+# 3. Push — prints a shareable URL
+artifactbay push --name "Database redesign"
+```
+
+- **Idempotent & fail-open:** safe to call on every run; if ArtifactBay is unreachable the push is queued to `.artifactbay/pending/` and the agent never crashes.
+- **Versioned:** the session id is remembered in `.artifactbay/session_id`, so a re-push becomes **v2** automatically.
+- **Preflight:** `artifactbay doctor` checks connectivity, auth, and staged artifacts.
+
+Per-agent shims (auto-trigger or slash command) live in [`integrations/`](integrations/):
+
+| Agent | Trigger |
+|:---|:---|
+| **Claude Code** | Skill `/artifactbay-push` (+ optional Stop hook for auto-push) |
+| **Codex CLI** | `AGENTS.md` instruction → `artifactbay push` |
+| **Cursor** | `.cursor/rules` + VS Code task |
+| **Aider** | `post-commit` hook (auto-push on commit) |
+| **OpenCode** | `/artifactbay` command |
+
+---
+
 ## 🧪 Running Integration Tests
 
 E2E and smoke tests verify endpoints, session deletion, blob garbage collection, collection pagination, search indexes, and visibility constraints.
 
 Run the test suite inside an isolated Docker container using an ephemeral SQLite database:
 ```bash
-docker compose -f docker-compose.full.yml run --build --rm backend sh -c "FOUNDRY_DATABASE_URL=sqlite:///./smoke.db python smoke_test.py"
+docker compose -f docker-compose.full.yml run --build --rm backend sh -c "ARTIFACTBAY_DATABASE_URL=sqlite:///./smoke.db python smoke_test.py"
 ```
 
 ---

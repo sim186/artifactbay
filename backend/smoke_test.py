@@ -5,7 +5,7 @@ import base64
 import json
 import os
 
-os.environ.setdefault("FOUNDRY_DATABASE_URL", "sqlite:///./smoke.db")
+os.environ.setdefault("ARTIFACTBAY_DATABASE_URL", "sqlite:///./smoke.db")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -156,7 +156,7 @@ def main() -> None:
     assert r.status_code == 201
     new_key = r.json()
     key_id, new_token = new_key["id"], new_key["token"]
-    assert new_token.startswith("fdy_")
+    assert new_token.startswith("ab_")
     assert all("token" not in k for k in client.get("/v0/auth/keys").json())  # never re-exposed
     KH = {"Authorization": f"Bearer {new_token}"}
     assert anon.post("/v0/sessions", json={"name": "via new key", "agent": "codex"},
