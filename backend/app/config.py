@@ -11,7 +11,11 @@ class Settings(BaseSettings):
     # e.g. postgresql+psycopg://user:pass@localhost/artifactbay
     database_url: str = "sqlite:///./artifactbay.db"
 
-    base_url: str = "http://localhost:8000"
+    # Public origin of the WEB app (SPA), not the API — share links point here so
+    # `/s/<id>` is handled by the frontend router. In native dev that's the vite
+    # server (:5173); in prod, the nginx/web host. Pointing this at the backend
+    # makes share links 404 with a JSON body (no `/s/` route there).
+    base_url: str = "http://localhost:5173"
 
     # Bootstrap API key: seeded as a real (hashed) ApiKey row on startup so existing
     # agents/CLI keep working. Set empty to disable.

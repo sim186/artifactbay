@@ -28,9 +28,11 @@ export function AddToCollection({ sessionId }: { sessionId: string }) {
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="rounded-md border border-border px-2 py-1 text-xs text-text-dim hover:bg-surface-2 hover:text-text"
+        className="rounded-md border border-border px-2 py-1 text-xs leading-none text-text-dim hover:bg-surface-2 hover:text-text"
+        title="Add to collection"
+        aria-label="Add to collection"
       >
-        ◆ Add to collection
+        ◆
       </button>
       {open && (
         <>

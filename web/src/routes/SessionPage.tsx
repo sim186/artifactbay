@@ -42,27 +42,27 @@ export function SessionPage() {
             {s.git.commit && <span>{s.git.commit.slice(0, 7)}</span>}
             {s.git.branch && <span>{s.git.branch}</span>}
             <span>{s.status}</span>
+            <AgentBadge agent={s.agent} dot />
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3">
           <button
             onClick={() => setShowInfo((v) => !v)}
-            className={`rounded-md border px-2.5 py-1 text-xs ${
+            className={`rounded-md border px-2 py-1 text-xs leading-none ${
               showInfo
                 ? 'border-accent/40 bg-accent-soft text-text'
                 : 'border-border text-text-dim hover:bg-surface-2 hover:text-text'
             }`}
             title="Toggle provenance panel"
+            aria-label="Details"
           >
-            ⓘ Details
+            ⓘ
           </button>
           {user && <ShareButton sessionId={s.id} shareUrl={s.share_url} />}
           {user && <AddToCollection sessionId={s.id} />}
           {user && <FavoriteButton id={s.id} favorite={s.favorite} />}
-          <AgentBadge agent={s.agent} />
           {/* version timeline */}
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-text-faint">Version</span>
             <div className="relative flex items-center">
               <select
                 value={s.requested_version}

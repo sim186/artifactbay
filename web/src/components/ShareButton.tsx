@@ -42,14 +42,15 @@ export function ShareButton({ sessionId, shareUrl }: { sessionId: string; shareU
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className={`rounded-md border px-2.5 py-1 text-xs ${
+        className={`rounded-md border px-2 py-1 text-xs leading-none ${
           shareUrl
             ? 'border-accent/40 bg-accent-soft text-text'
             : 'border-border text-text-dim hover:bg-surface-2 hover:text-text'
         }`}
-        title="Share a public link to this session"
+        title={shareUrl ? 'Shared — manage public link' : 'Share a public link to this session'}
+        aria-label="Share"
       >
-        🔗 {shareUrl ? 'Shared' : 'Share'}
+        🔗
       </button>
 
       {open && (

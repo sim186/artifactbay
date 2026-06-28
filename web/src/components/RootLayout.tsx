@@ -1,11 +1,17 @@
 import { Outlet } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
+import { useAuth } from '../auth'
 import { CommandPalette } from './CommandPalette'
 import { Sidebar } from './Sidebar'
 
 export function RootLayout() {
+  const { user } = useAuth()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+
+  // Anon viewers (public share links) have no owner nav — the sidebar's queries are
+  // authed and would 401. Show a chrome-less, full-width view instead.
+  const showSidebar = !!user
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -23,22 +29,24 @@ export function RootLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-text">
-      {/* Integrated Sidebar */}
-      <div
-        className={`shrink-0 overflow-hidden transition-all duration-200 ease-in-out ${
-          sidebarOpen ? 'w-64' : 'w-0'
-        }`}
-      >
-        <Sidebar
-          onOpenSearch={() => setPaletteOpen(true)}
-          onClose={() => setSidebarOpen(false)}
-        />
-      </div>
+      {/* Integrated Sidebar — owner-only */}
+      {showSidebar && (
+        <div
+          className={`shrink-0 overflow-hidden transition-all duration-200 ease-in-out ${
+            sidebarOpen ? 'w-64' : 'w-0'
+          }`}
+        >
+          <Sidebar
+            onOpenSearch={() => setPaletteOpen(true)}
+            onClose={() => setSidebarOpen(false)}
+          />
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Top bar with sidebar toggle */}
-        {!sidebarOpen && (
+        {showSidebar && !sidebarOpen && (
           <div className="flex shrink-0 items-center px-3 py-2">
             <button
               onClick={() => setSidebarOpen(true)}

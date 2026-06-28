@@ -14,11 +14,18 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5_000, retry: 1 } },
 })
 
+// A capability share link (/s/<id>?t=<token>) is meant for anon viewers — it must
+// bypass the login gate so the token, not a session cookie, grants read access.
+function isPublicShareLink() {
+  const params = new URLSearchParams(window.location.search)
+  return window.location.pathname.startsWith('/s/') && params.has('t')
+}
+
 function AppGate() {
   const { user, loading } = useAuth()
   if (loading)
     return <div className="flex h-screen items-center justify-center bg-bg text-text-faint">Loading…</div>
-  if (!user) return <Login />
+  if (!user && !isPublicShareLink()) return <Login />
   return <RouterProvider router={router} />
 }
 
