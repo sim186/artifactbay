@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import func
 from sqlmodel import Session as DBSession
 from sqlmodel import col, select
@@ -26,6 +26,7 @@ from ..schemas import (
 from ..store import (
     body_hash,
     build_search_text,
+    delete_session_and_cleanup_blobs,
     recompute_search_text,
     upsert_project,
     write_artifacts,
@@ -272,3 +273,17 @@ def patch_session(
         git=GitInfo(repository=sess.git_repository, branch=sess.git_branch, commit=sess.git_commit),
         artifact_count=count, updated_at=sess.updated_at.isoformat(), url=_session_url(sess.id),
     )
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(require_writer)])
+def delete_session(
+    session_id: str,
+    db: DBSession = Depends(get_session),
+) -> Response:
+    sess = db.get(Session, session_id)
+    if sess is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    delete_session_and_cleanup_blobs(db, session_id)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

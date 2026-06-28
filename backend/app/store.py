@@ -11,7 +11,7 @@ from sqlmodel import Session as DBSession
 from sqlmodel import select
 
 from .config import settings
-from .models import Artifact, Blob, Project, Session
+from .models import Artifact, Blob, Collection, IdempotencyRecord, Project, Session
 from .schemas import ArtifactIn, SessionIn
 
 # Text types whose decoded bytes are directly searchable.
@@ -163,3 +163,40 @@ def recompute_search_text(db: DBSession, sess: Session) -> None:
 def body_hash(payload: SessionIn) -> str:
     raw = json.dumps(payload.model_dump(mode="json"), sort_keys=True).encode()
     return hashlib.sha256(raw).hexdigest()
+
+
+def delete_session_and_cleanup_blobs(db: DBSession, session_id: str) -> None:
+    """Delete a session, clean up its artifacts, decrement referenced blob ref_counts
+    (deleting blobs that drop to 0 ref_count), delete associated idempotency records,
+    and remove the session from any collection pin lists.
+    """
+    sess = db.get(Session, session_id)
+    if not sess:
+        return
+
+    # 1. Decrement ref counts of blobs linked to this session's artifacts
+    artifacts = db.exec(select(Artifact).where(Artifact.session_id == session_id)).all()
+    for art in artifacts:
+        blob = db.get(Blob, art.content_hash)
+        if blob:
+            blob.ref_count -= 1
+            if blob.ref_count <= 0:
+                db.delete(blob)
+            else:
+                db.add(blob)
+        db.delete(art)
+
+    # 2. Delete associated idempotency records
+    idem_records = db.exec(select(IdempotencyRecord).where(IdempotencyRecord.session_id == session_id)).all()
+    for rec in idem_records:
+        db.delete(rec)
+
+    # 3. Clean up collections that have pinned this session
+    collections = db.exec(select(Collection)).all()
+    for col_row in collections:
+        if col_row.pinned and session_id in col_row.pinned:
+            col_row.pinned = [x for x in col_row.pinned if x != session_id]
+            db.add(col_row)
+
+    # 4. Delete the session itself
+    db.delete(sess)

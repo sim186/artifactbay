@@ -5,4 +5,3 @@ __pycache__/
 *.db
 .pytest_cache/
 .git/
-smoke_test.py

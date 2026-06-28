@@ -224,6 +224,61 @@ def main() -> None:
     assert anon.get(f"/v0/sessions/{priv_id}").status_code == 404
     assert anon.get(f"/v0/sessions/{pub_id}").status_code == 200
 
+    # ── session deletion & blob GC ────────────────────────────────────────
+    # Create a new session with an artifact to check blob GC.
+    test_gc_body = {
+        "name": "GC session", "agent": "claude-code",
+        "artifacts": [{"name": "gc_file.txt", "type": "text", "content": "gc-unique-token-999"}]
+    }
+    r = client.post("/v0/sessions", json=test_gc_body, headers=H)
+    gc_sid = r.json()["id"]
+    gc_art_id = r.json()["artifacts"][0]["id"]
+    
+    # Verify the artifact metadata and raw content exist
+    assert client.get(f"/v0/artifacts/{gc_art_id}/meta").status_code == 200
+    assert client.get(f"/v0/artifacts/{gc_art_id}").status_code == 200
+    
+    # Pin session to a collection to verify pin cleanup
+    r = client.post("/v0/collections", json={"name": "GC Coll", "query": {}})
+    gc_cid = r.json()["id"]
+    client.put(f"/v0/collections/{gc_cid}/sessions/{gc_sid}")
+    assert gc_sid in client.get(f"/v0/collections/{gc_cid}").json()["pinned"]
+    
+    # Delete requires authentication (anonymous -> 401)
+    assert anon.delete(f"/v0/sessions/{gc_sid}").status_code == 401
+
+    # Delete the session
+    assert client.delete(f"/v0/sessions/{gc_sid}", headers=H).status_code == 204
+    # Verify session is gone
+    assert client.get(f"/v0/sessions/{gc_sid}").status_code == 404
+    # Verify artifact metadata is gone
+    assert client.get(f"/v0/artifacts/{gc_art_id}/meta").status_code == 404
+    # Verify the pin is removed from collection
+    assert gc_sid not in client.get(f"/v0/collections/{gc_cid}").json()["pinned"]
+    client.delete(f"/v0/collections/{gc_cid}")
+    
+    # ── collection pagination ─────────────────────────────────────────────
+    # Create two sessions matching a specific tag/query
+    client.post("/v0/sessions", json={"name": "pag-1", "agent": "claude-code", "tags": ["pag-test"]}, headers=H)
+    client.post("/v0/sessions", json={"name": "pag-2", "agent": "claude-code", "tags": ["pag-test"]}, headers=H)
+    
+    r = client.post("/v0/collections", json={"name": "Pag Coll", "query": {"tag": "pag-test"}})
+    pag_cid = r.json()["id"]
+    
+    # Resolve collection with limit=1
+    r = client.get(f"/v0/collections/{pag_cid}/sessions?limit=1")
+    assert r.status_code == 200
+    assert len(r.json()["sessions"]) == 1
+    assert r.json()["total"] == 2
+    
+    # Resolve collection with limit=1, offset=1
+    r = client.get(f"/v0/collections/{pag_cid}/sessions?limit=1&offset=1")
+    assert r.status_code == 200
+    assert len(r.json()["sessions"]) == 1
+    assert r.json()["total"] == 2
+    
+    client.delete(f"/v0/collections/{pag_cid}")
+
     print("ALL SMOKE TESTS PASSED ✅")
 
 

@@ -1,7 +1,7 @@
 """Collections = saved query + manually pinned sessions (hybrid). Owner-scoped."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlmodel import Session as DBSession
 from sqlmodel import col, select
@@ -105,7 +105,9 @@ def unpin_session(collection_id: str, session_id: str, p: Principal = Depends(re
 
 @router.get("/{collection_id}/sessions", response_model=SessionListOut)
 def resolve_collection(collection_id: str, p: Principal = Depends(require_user),
-                       db: DBSession = Depends(get_session)) -> SessionListOut:
+                       db: DBSession = Depends(get_session),
+                       limit: int = Query(default=50, le=200),
+                       offset: int = Query(default=0, ge=0)) -> SessionListOut:
     """Members = sessions matching the saved query ∪ manually pinned sessions."""
     c = _owned(db, collection_id, p)
     q = c.query or {}
@@ -129,4 +131,6 @@ def resolve_collection(collection_id: str, p: Principal = Depends(require_user),
             pinned_summaries.append(summarize(db, s))
             seen.add(sid)
     members = pinned_summaries + matched
-    return SessionListOut(sessions=members, total=len(members))
+    total = len(members)
+    sliced_members = members[offset:offset + limit]
+    return SessionListOut(sessions=sliced_members, total=total)
