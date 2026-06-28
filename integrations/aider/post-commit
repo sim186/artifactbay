@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Aider auto-commits its edits → a git post-commit hook is a reliable AUTO push trigger.
+#
+# Install (per repo):
+#   cp integrations/aider/post-commit .git/hooks/post-commit
+#   chmod +x .git/hooks/post-commit
+#
+# Behaviour: snapshots the just-committed diff as an artifact, then pushes (fail-open).
+# Requires FOUNDRY_URL + FOUNDRY_KEY in the environment aider runs in.
+set -uo pipefail
+
+mkdir -p .foundry/artifacts
+
+# Capture the latest commit's diff + message as artifacts so there's always something to push.
+SUBJECT="$(git log -1 --pretty=%s)"
+{
+  echo "# $SUBJECT"
+  echo
+  git show --stat --patch HEAD
+} > ".foundry/artifacts/commit-$(git rev-parse --short HEAD).md"
+
+# Resolve the foundry CLI: prefer the wrapper on PATH, else this repo's copy.
+if command -v foundry >/dev/null 2>&1; then
+  FOUNDRY_AGENT=aider foundry push --name "$SUBJECT" || true
+else
+  CLI="$(git rev-parse --show-toplevel)/integrations/foundry_cli.py"
+  [ -f "$CLI" ] && FOUNDRY_AGENT=aider python3 "$CLI" push --name "$SUBJECT" || true
+fi
+exit 0  # never block the commit

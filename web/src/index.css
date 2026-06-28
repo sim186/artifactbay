@@ -1,0 +1,67 @@
+@import 'tailwindcss';
+
+/* Dark dev-tool theme. Neutral grays + single indigo accent. */
+@theme {
+  --color-bg: #0b0d12;
+  --color-surface: #12151c;
+  --color-surface-2: #171b24;
+  --color-border: #232936;
+  --color-border-soft: #1b2029;
+  --color-text: #e6e9ef;
+  --color-text-dim: #9aa3b2;
+  --color-text-faint: #5c6678;
+  --color-accent: #6366f1;
+  --color-accent-soft: #6366f133;
+
+  /* Agent identity colors */
+  --color-agent-claude: #d97757;
+  --color-agent-codex: #10a37f;
+  --color-agent-opencode: #8b5cf6;
+  --color-agent-cursor: #3b82f6;
+  --color-agent-aider: #eab308;
+
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* Light theme: override the same tokens. Tailwind utilities read these vars,
+   so flipping data-theme recolors the whole shell + our-rendered views.
+   (HTML/SVG artifacts render in their own iframe and are never recolored.) */
+:root[data-theme='light'] {
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #eef0f3;
+  --color-border: #dfe3e8;
+  --color-border-soft: #e9ecef;
+  --color-text: #1a1d23;
+  --color-text-dim: #525a66;
+  --color-text-faint: #8b94a1;
+  --color-accent-soft: #6366f11f;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin dev-tool scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 6px;
+}

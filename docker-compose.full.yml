@@ -1,0 +1,47 @@
+# Whole stack, prod-like. The self-hosted deploy path.
+#   docker compose -f docker-compose.full.yml up --build
+#   → web on http://localhost:8080 (nginx serves SPA + proxies /v0 to backend)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: foundry
+      POSTGRES_PASSWORD: foundry
+      POSTGRES_DB: foundry
+    volumes:
+      - foundry-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U foundry -d foundry"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      FOUNDRY_DATABASE_URL: postgresql+psycopg://foundry:foundry@db:5432/foundry
+      FOUNDRY_BASE_URL: http://localhost:8080
+      # CHANGE all of these in real deploys.
+      FOUNDRY_API_KEY: fdy_dev_changeme
+      FOUNDRY_JWT_SECRET: dev-insecure-change-me-please-32byte-minimum
+      FOUNDRY_ADMIN_USERNAME: admin
+      FOUNDRY_ADMIN_PASSWORD: admin
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build: ./web
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  foundry-pgdata:

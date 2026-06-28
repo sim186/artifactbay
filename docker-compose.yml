@@ -1,0 +1,26 @@
+# Dev: Postgres only. App (backend/uvicorn, web/vite) runs NATIVE for hot-reload.
+# Full prod-like stack lives in docker-compose.full.yml (added after frontend).
+#
+#   docker compose up -d        # start Postgres
+#   docker compose down         # stop (keeps volume)
+#   docker compose down -v      # stop + wipe data
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: foundry-db
+    environment:
+      POSTGRES_USER: foundry
+      POSTGRES_PASSWORD: foundry
+      POSTGRES_DB: foundry
+    ports:
+      - "5432:5432"
+    volumes:
+      - foundry-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U foundry -d foundry"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  foundry-pgdata:

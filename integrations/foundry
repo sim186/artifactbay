@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Thin wrapper so any agent/shell can call `foundry push` / `foundry doctor`.
+# Symlink onto PATH:   ln -s "$PWD/integrations/foundry" /usr/local/bin/foundry
+# Then: foundry doctor | foundry push --name "..."
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$HERE/foundry_cli.py" "$@"
