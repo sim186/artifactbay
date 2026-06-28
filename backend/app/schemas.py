@@ -109,4 +109,9 @@ class SessionOut(BaseModel):
     requested_version: int
     created_at: str
     updated_at: str
+    share_url: str | None = None  # capability link; only present for authenticated owners
     artifacts: list[ArtifactOut]
+
+
+class ShareOut(BaseModel):
+    url: str

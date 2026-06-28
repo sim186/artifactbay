@@ -21,7 +21,7 @@ from sqlmodel import select
 
 from .config import settings
 from .db import get_session
-from .models import ApiKey, Role, Scope, User
+from .models import ApiKey, Role, Scope, Session, User, Visibility
 
 
 # ── password + token primitives ──────────────────────────────────────────────
@@ -98,6 +98,18 @@ def _principal_from_apikey(request: Request, db: DBSession) -> Principal | None:
     db.add(row)
     db.commit()
     return Principal(kind="apikey", id=row.id, scope=row.scope, role=None)
+
+
+def session_readable(sess: Session, principal: Principal | None, token: str | None) -> bool:
+    """Whether a reader may see this session: any authenticated principal, a public
+    session for anyone, or anyone holding the session's capability link token."""
+    if principal is not None:
+        return True
+    if sess.visibility == Visibility.public:
+        return True
+    if token and sess.share_token and secrets.compare_digest(token, sess.share_token):
+        return True
+    return False
 
 
 def optional_principal(request: Request, db: DBSession = Depends(get_session)) -> Principal | None:

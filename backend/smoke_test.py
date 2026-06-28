@@ -224,6 +224,40 @@ def main() -> None:
     assert anon.get(f"/v0/sessions/{priv_id}").status_code == 404
     assert anon.get(f"/v0/sessions/{pub_id}").status_code == 200
 
+    # ── capability link (viewer-only sharing) ─────────────────────────────
+    r = client.post("/v0/sessions",
+                    json={"name": "link-shared", "agent": "codex", "visibility": "private",
+                          "artifacts": [{"name": "p.html", "type": "html", "content": "<h1>Hi</h1>"}]},
+                    headers=H)
+    link_sid = r.json()["id"]
+    link_aid = r.json()["artifacts"][0]["id"]
+    # private → anon blocked without a token
+    assert anon.get(f"/v0/sessions/{link_sid}").status_code == 404
+    assert anon.get(f"/v0/artifacts/{link_aid}/view").status_code == 404
+    # mint the link
+    share = client.post(f"/v0/sessions/{link_sid}/share", headers=H)
+    assert share.status_code == 200, share.text
+    tok = share.json()["url"].split("t=")[1]
+    # anon read works WITH a valid token, on both session + artifact routes
+    assert anon.get(f"/v0/sessions/{link_sid}?t={tok}").status_code == 200
+    assert anon.get(f"/v0/artifacts/{link_aid}/view?t={tok}").status_code == 200
+    assert anon.get(f"/v0/artifacts/{link_aid}?t={tok}").status_code == 200
+    # wrong token rejected; secret never leaks to anon in the payload
+    assert anon.get(f"/v0/sessions/{link_sid}?t=wrong").status_code == 404
+    assert anon.get(f"/v0/sessions/{link_sid}?t={tok}").json()["share_url"] is None
+    # link-shared session stays out of the anonymous list (unlisted)
+    assert link_sid not in {s["id"] for s in anon.get("/v0/sessions").json()["sessions"]}
+    # minting only the share link is writer-gated
+    assert anon.post(f"/v0/sessions/{link_sid}/share").status_code == 401
+    # rotating invalidates the old token
+    tok2 = client.post(f"/v0/sessions/{link_sid}/share?rotate=true", headers=H).json()["url"].split("t=")[1]
+    assert tok2 != tok
+    assert anon.get(f"/v0/sessions/{link_sid}?t={tok}").status_code == 404
+    assert anon.get(f"/v0/sessions/{link_sid}?t={tok2}").status_code == 200
+    # revoke kills all links
+    assert client.delete(f"/v0/sessions/{link_sid}/share", headers=H).status_code == 204
+    assert anon.get(f"/v0/sessions/{link_sid}?t={tok2}").status_code == 404
+
     # ── session deletion & blob GC ────────────────────────────────────────
     # Create a new session with an artifact to check blob GC.
     test_gc_body = {

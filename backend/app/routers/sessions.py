@@ -1,6 +1,7 @@
 """Session endpoints: create, version, get, list, patch. See docs/01 §3."""
 from __future__ import annotations
 
+import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -8,7 +9,7 @@ from sqlalchemy import func
 from sqlmodel import Session as DBSession
 from sqlmodel import col, select
 
-from ..auth import Principal, optional_principal, require_writer
+from ..auth import Principal, optional_principal, require_writer, session_readable
 from ..config import settings
 from ..db import get_session
 from ..models import Artifact, IdempotencyRecord, Session, SessionStatus, Visibility
@@ -22,6 +23,7 @@ from ..schemas import (
     SessionOut,
     SessionPatch,
     SessionSummary,
+    ShareOut,
 )
 from ..store import (
     body_hash,
@@ -41,6 +43,10 @@ def _artifact_url(aid: str) -> str:
 
 def _session_url(sid: str) -> str:
     return f"{settings.base_url}/s/{sid}"
+
+
+def _share_url(sid: str, token: str) -> str:
+    return f"{settings.base_url}/s/{sid}?t={token}"
 
 
 @router.post("/sessions", response_model=CreateSessionOut, status_code=status.HTTP_201_CREATED,
@@ -217,18 +223,21 @@ def list_sessions(
 def get_session_detail(
     session_id: str,
     version: int | None = Query(default=None),
+    t: str | None = Query(default=None, description="capability link token"),
     db: DBSession = Depends(get_session),
     principal: Principal | None = Depends(optional_principal),
 ) -> SessionOut:
     sess = db.get(Session, session_id)
     if sess is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
-    if sess.visibility != Visibility.public and principal is None:
+    if not session_readable(sess, principal, t):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     req_ver = version or sess.version
     arts = db.exec(
         select(Artifact).where(Artifact.session_id == sess.id, Artifact.version == req_ver)
     ).all()
+    # Only an authenticated owner sees the secret link; never exposed to anon readers.
+    share_url = _share_url(sess.id, sess.share_token) if (principal and sess.share_token) else None
     return SessionOut(
         id=sess.id, name=sess.name, description=sess.description, status=sess.status.value,
         agent=sess.agent, model=sess.model, project_id=sess.project_id,
@@ -236,12 +245,48 @@ def get_session_detail(
         tags=sess.tags, favorite=sess.favorite, visibility=sess.visibility.value,
         version=sess.version, requested_version=req_ver,
         created_at=sess.created_at.isoformat(), updated_at=sess.updated_at.isoformat(),
+        share_url=share_url,
         artifacts=[
             ArtifactOut(id=a.id, name=a.name, type=a.type, size_bytes=a.size_bytes,
                         allow_scripts=a.allow_scripts, url=_artifact_url(a.id))
             for a in arts
         ],
     )
+
+
+@router.post("/sessions/{session_id}/share", response_model=ShareOut,
+             dependencies=[Depends(require_writer)])
+def create_share_link(
+    session_id: str,
+    rotate: bool = Query(default=False, description="mint a fresh token, invalidating the old link"),
+    db: DBSession = Depends(get_session),
+) -> ShareOut:
+    """Mint (or return existing) capability link for anon viewers. `rotate=1` revokes the old."""
+    sess = db.get(Session, session_id)
+    if sess is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    if sess.share_token is None or rotate:
+        sess.share_token = secrets.token_urlsafe(32)
+        db.add(sess)
+        db.commit()
+        db.refresh(sess)
+    return ShareOut(url=_share_url(sess.id, sess.share_token))
+
+
+@router.delete("/sessions/{session_id}/share", status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(require_writer)])
+def revoke_share_link(
+    session_id: str,
+    db: DBSession = Depends(get_session),
+) -> Response:
+    """Revoke the capability link; existing URLs stop working immediately."""
+    sess = db.get(Session, session_id)
+    if sess is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    sess.share_token = None
+    db.add(sess)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/sessions/{session_id}", response_model=SessionSummary,

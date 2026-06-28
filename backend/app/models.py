@@ -80,6 +80,9 @@ class Session(SQLModel, table=True):
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     favorite: bool = False
     visibility: Visibility = Field(default=Visibility.private)
+    # Capability link: unguessable token grants anon read of this one session
+    # (all versions + artifacts), independent of visibility. None = not shared.
+    share_token: str | None = Field(default=None, index=True)
     version: int = 1
     # Denormalized searchable text: metadata + extracted current-version artifact text.
     # Indexed with a Postgres GIN(to_tsvector) for full-text search (see db.py).

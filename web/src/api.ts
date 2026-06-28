@@ -35,6 +35,7 @@ export interface SessionOut {
   requested_version: number
   created_at: string
   updated_at: string
+  share_url: string | null // capability link; present only for authenticated owners
   artifacts: ArtifactOut[]
 }
 
@@ -168,19 +169,39 @@ export interface Collection {
   created_at: string
 }
 
+export interface ShareLink {
+  url: string
+}
+
+// Build a `?version=&t=` query string; omits empty params. `t` = capability token.
+function viewQs(version?: number, t?: string): string {
+  const p = new URLSearchParams()
+  if (version) p.set('version', String(version))
+  if (t) p.set('t', t)
+  const s = p.toString()
+  return s ? `?${s}` : ''
+}
+
 export const api = {
   meta: () => get<Meta>('/v0/meta'),
   list: (params: ListParams = {}) => get<SessionList>(`/v0/sessions${qs(params)}`),
   setFavorite: (id: string, favorite: boolean) =>
     req<SessionSummary>('PATCH', `/v0/sessions/${id}`, { favorite }),
-  session: (id: string, version?: number) =>
-    get<SessionOut>(`/v0/sessions/${id}${version ? `?version=${version}` : ''}`),
+  // `t` (capability token) lets anon viewers read a link-shared session.
+  session: (id: string, version?: number, t?: string) =>
+    get<SessionOut>(`/v0/sessions/${id}${viewQs(version, t)}`),
   createSession: (payload: SessionIn) =>
     req<CreateSessionOut>('POST', '/v0/sessions', payload),
-  artifactMeta: (id: string) => get<ArtifactDetail>(`/v0/artifacts/${id}/meta`),
+  artifactMeta: (id: string, t?: string) =>
+    get<ArtifactDetail>(`/v0/artifacts/${id}/meta${viewQs(undefined, t)}`),
   // Raw + sandboxed-view URLs are plain paths (used as <a>/<iframe> src).
-  artifactRaw: (id: string) => `/v0/artifacts/${id}`,
-  artifactView: (id: string) => `/v0/artifacts/${id}/view`,
+  artifactRaw: (id: string, t?: string) => `/v0/artifacts/${id}${viewQs(undefined, t)}`,
+  artifactView: (id: string, t?: string) => `/v0/artifacts/${id}/view${viewQs(undefined, t)}`,
+
+  // capability link (viewer-only sharing)
+  shareSession: (id: string, rotate = false) =>
+    req<ShareLink>('POST', `/v0/sessions/${id}/share${rotate ? '?rotate=true' : ''}`, {}),
+  revokeShare: (id: string) => req<void>('DELETE', `/v0/sessions/${id}/share`),
 
   // auth
   me: () => get<User>('/v0/auth/me'),

@@ -23,6 +23,7 @@ ArtifactBay is a **session-centric artifact repository** designed specifically f
 - **Full-text search** — find sessions by title, content, agent, model, or tags.
 - **Safe rendering** — untrusted HTML runs in a sandboxed, cross-origin `<iframe>` under a strict CSP; scripts are off unless explicitly opted in.
 - **Content-addressed storage** — blobs deduped by SHA-256 with reference-counted garbage collection.
+- **Capability links** — share a single session via an unguessable secret URL; viewers need no account, and the link is revocable.
 - **Collections** — group sessions into saved searches or manual pins.
 - **Agent integrations** — drop-in shims for Claude Code, Codex, Cursor, Aider, and OpenCode.
 
@@ -176,6 +177,13 @@ To prevent untrusted JavaScript executed inside agent-generated artifacts from h
   - If a blob's `ref_count` drops to `0` or less, the blob record is deleted.
   - Removes associated artifacts, idempotency records, and deletes pins in any active collection.
 
+### 3. Capability Links (Viewer-Only Sharing)
+To let people view a private session without giving them an account:
+- `POST /v0/sessions/{id}/share` mints an unguessable token (`secrets.token_urlsafe(32)`) stored on the session; the share URL is `/s/{id}?t=<token>`.
+- The token grants anonymous **read** of that one session (all versions + artifacts), independent of `visibility`. It never appears in list queries, so link-shared sessions stay unlisted.
+- Token checks use a constant-time compare and return `404` (not `403`) on mismatch, so existence isn't leaked. Read endpoints serve artifacts with `Referrer-Policy: no-referrer` to keep the token out of outbound referrers.
+- `DELETE /v0/sessions/{id}/share` (or `POST …/share?rotate=1`) revokes/rolls the link immediately.
+
 ---
 
 ## 📡 REST API v0 Endpoints
@@ -187,6 +195,8 @@ To prevent untrusted JavaScript executed inside agent-generated artifacts from h
 | **POST** | `/v0/sessions/{id}/versions` | Bearer Key | Freeze current artifacts and snapshot a new version |
 | **PATCH** | `/v0/sessions/{id}` | Bearer Key | Modify session metadata (title, tags, favorite) |
 | **DELETE**| `/v0/sessions/{id}` | Bearer Key | Delete session and trigger Blob GC |
+| **POST** | `/v0/sessions/{id}/share` | Bearer Key | Mint a capability link (`?rotate=1` to roll the token) |
+| **DELETE**| `/v0/sessions/{id}/share` | Bearer Key | Revoke the capability link |
 | **GET** | `/v0/sessions` | Cookie/Anon | List all visible sessions (supports FTS filter `?q=`) |
 | **GET** | `/v0/sessions/{id}` | Cookie/Anon | View session detail (optional `?version=`) |
 | **GET** | `/v0/artifacts/{id}` | Cookie/Anon | Retrieve raw artifact bytes |

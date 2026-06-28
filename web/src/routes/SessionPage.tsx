@@ -1,23 +1,27 @@
 import { useQuery } from '@tanstack/react-query'
-import { useParams } from '@tanstack/react-router'
+import { useParams, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api } from '../api'
+import { useAuth } from '../auth'
 import { AddToCollection } from '../components/AddToCollection'
 import { AgentBadge } from '../components/AgentBadge'
 import { ArtifactViewer } from '../components/ArtifactViewer'
 import { FavoriteButton } from '../components/FavoriteButton'
 import { ProvenancePanel } from '../components/ProvenancePanel'
+import { ShareButton } from '../components/ShareButton'
 import { formatBytes } from '../lib/agent'
 
 export function SessionPage() {
   const { sessionId } = useParams({ from: '/s/$sessionId' })
+  const { t } = useSearch({ from: '/s/$sessionId' })
+  const { user } = useAuth()
   const [version, setVersion] = useState<number | undefined>(undefined)
   const [selected, setSelected] = useState(0)
   const [showInfo, setShowInfo] = useState(false)
 
   const { data: s, isLoading, error } = useQuery({
-    queryKey: ['session', sessionId, version],
-    queryFn: () => api.session(sessionId, version),
+    queryKey: ['session', sessionId, version, t],
+    queryFn: () => api.session(sessionId, version, t),
   })
 
   if (isLoading) return <p className="p-8 text-sm text-text-faint">Loading…</p>
@@ -52,8 +56,9 @@ export function SessionPage() {
           >
             ⓘ Details
           </button>
-          <AddToCollection sessionId={s.id} />
-          <FavoriteButton id={s.id} favorite={s.favorite} />
+          {user && <ShareButton sessionId={s.id} shareUrl={s.share_url} />}
+          {user && <AddToCollection sessionId={s.id} />}
+          {user && <FavoriteButton id={s.id} favorite={s.favorite} />}
           <AgentBadge agent={s.agent} />
           {/* version timeline */}
           <div className="flex items-center gap-2">
@@ -106,7 +111,7 @@ export function SessionPage() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           {artifact ? (
-            <ArtifactViewer key={artifact.id} artifact={artifact} />
+            <ArtifactViewer key={artifact.id} artifact={artifact} token={t} />
           ) : (
             <div className="flex flex-1 items-center justify-center text-sm text-text-faint">
               Select an artifact

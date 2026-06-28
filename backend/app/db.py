@@ -26,6 +26,7 @@ def init_db() -> None:
         with engine.begin() as conn:
             # create_all won't add columns to a pre-existing table — do it idempotently.
             conn.execute(text("ALTER TABLE session ADD COLUMN IF NOT EXISTS search_text text DEFAULT ''"))
+            conn.execute(text("ALTER TABLE session ADD COLUMN IF NOT EXISTS share_token varchar"))
             conn.execute(text("ALTER TABLE collection ADD COLUMN IF NOT EXISTS pinned json DEFAULT '[]'"))
             # Full-text index over the search document.
             conn.execute(text(

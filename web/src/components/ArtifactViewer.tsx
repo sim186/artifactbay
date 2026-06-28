@@ -71,7 +71,7 @@ function mdDoc(html: string, theme: 'dark' | 'light'): string {
   </style></head><body>${html}</body></html>`
 }
 
-export function ArtifactViewer({ artifact }: { artifact: ArtifactOut }) {
+export function ArtifactViewer({ artifact, token }: { artifact: ArtifactOut; token?: string }) {
   const { type, id, allow_scripts } = artifact
   const hasPreview = HAS_PREVIEW.has(type)
   const hasSource = HAS_SOURCE.has(type)
@@ -84,8 +84,8 @@ export function ArtifactViewer({ artifact }: { artifact: ArtifactOut }) {
   // Fetch raw text only for textual types (needed for source view + md/json/svg preview).
   const needText = TEXTUAL.has(type)
   const { data: text } = useQuery({
-    queryKey: ['artifact-text', id],
-    queryFn: () => fetch(api.artifactRaw(id)).then((r) => r.text()),
+    queryKey: ['artifact-text', id, token],
+    queryFn: () => fetch(api.artifactRaw(id, token)).then((r) => r.text()),
     enabled: needText,
   })
 
@@ -130,7 +130,7 @@ export function ArtifactViewer({ artifact }: { artifact: ArtifactOut }) {
             ⛶ Fullscreen
           </button>
           <a
-            href={api.artifactRaw(id)}
+            href={api.artifactRaw(id, token)}
             target="_blank"
             rel="noreferrer"
             className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-surface-2"
@@ -149,6 +149,7 @@ export function ArtifactViewer({ artifact }: { artifact: ArtifactOut }) {
           allowScripts={allow_scripts}
           theme={theme}
           backdrop={backdrop}
+          token={token}
         />
       </div>
     </div>
@@ -162,6 +163,7 @@ function Content({
   allowScripts,
   theme,
   backdrop,
+  token,
 }: {
   artifact: ArtifactOut
   mode: 'preview' | 'source'
@@ -169,6 +171,7 @@ function Content({
   allowScripts: boolean
   theme: 'dark' | 'light'
   backdrop: 'dark' | 'light'
+  token?: string
 }) {
   const { type, id, name } = artifact
   // Backdrop behind media is the user's choice; independent of the app theme.
@@ -186,7 +189,7 @@ function Content({
     return (
       <iframe
         title={name}
-        src={api.artifactView(id)}
+        src={api.artifactView(id, token)}
         sandbox={allowScripts ? 'allow-scripts' : ''}
         className="h-full w-full border-0 bg-white"
       />
@@ -227,7 +230,7 @@ function Content({
   if (type === 'svg' || type === 'png') {
     return (
       <div className="flex h-full w-full items-center justify-center p-4" style={{ background: mediaBg }}>
-        <img src={api.artifactRaw(id)} alt={name} className="max-h-full max-w-full" />
+        <img src={api.artifactRaw(id, token)} alt={name} className="max-h-full max-w-full" />
       </div>
     )
   }
@@ -235,7 +238,7 @@ function Content({
   if (type === 'pdf') {
     return (
       <div className="h-full w-full" style={{ background: mediaBg }}>
-        <iframe title={name} src={api.artifactRaw(id)} className="h-full w-full border-0" />
+        <iframe title={name} src={api.artifactRaw(id, token)} className="h-full w-full border-0" />
       </div>
     )
   }
@@ -244,7 +247,7 @@ function Content({
     <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-text-dim">
       <p className="text-sm">No inline preview for .{type}</p>
       <a
-        href={api.artifactRaw(id)}
+        href={api.artifactRaw(id, token)}
         target="_blank"
         rel="noreferrer"
         className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-surface-2"

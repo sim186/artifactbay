@@ -35,6 +35,9 @@ const sessionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/s/$sessionId',
   component: SessionPage,
+  validateSearch: (s: Record<string, unknown>): { t?: string } => ({
+    t: typeof s.t === 'string' ? s.t : undefined,
+  }),
 })
 
 const artifactRoute = createRoute({
