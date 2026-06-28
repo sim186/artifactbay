@@ -93,6 +93,21 @@ To tear down:
 docker compose -p artifactbay-full -f docker-compose.full.yml down -v
 ```
 
+### Self-Hosting From Prebuilt Images (no source checkout)
+Every tagged release publishes multi-arch (amd64 + arm64) images to GHCR — `ghcr.io/sim186/artifactbay-backend` and `-web`. To deploy without cloning the repo:
+```bash
+# Grab the standalone compose file + env template
+curl -O https://raw.githubusercontent.com/sim186/artifactbay/main/docker-compose.deploy.yml
+curl -O https://raw.githubusercontent.com/sim186/artifactbay/main/.env.deploy.example
+
+# Fill in secrets (the compose file refuses to start until they're set)
+mv .env.deploy.example .env && $EDITOR .env
+
+# Launch — pulls images, no build
+docker compose -f docker-compose.deploy.yml up -d   # → http://localhost:8080
+```
+Pin a release with `ARTIFACTBAY_IMAGE_TAG=v1.2.3`; default is `:latest`. Put a TLS-terminating reverse proxy (Caddy, nginx, Traefik) in front and set `ARTIFACTBAY_BASE_URL` to your public `https://` host so share/artifact links resolve correctly.
+
 ### 2. Local Native Development
 For a fast inner-loop dev experience with hot-reloading:
 1. **Start Postgres** in the background:

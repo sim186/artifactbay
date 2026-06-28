@@ -13,6 +13,10 @@ venv/
 # Node
 node_modules/
 
+# Secrets (the deploy flow creates .env from .env.deploy.example)
+.env
+backend/.env
+
 # Editor / OS
 .vscode/
 .DS_Store
