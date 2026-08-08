@@ -11,6 +11,8 @@ Stdlib only: no pip install, drops into any agent's shell. The engine lives in
         [--resume]        retry any queued pushes in .artifactbay/pending/
         [--dry-run]       print the payload, don't send
         [--no-redact]     skip client-side secret stripping (not recommended)
+  pack  [SESSION_ID|FILES] build ONE self-contained HTML file — opens offline,
+        [--local]          needs no ArtifactBay to view. For presenting.
   share SESSION_ID        mint a capability link for a session
   ls    [-q QUERY]        list recent sessions
   mcp                     run the MCP server on stdio (see artifactbay_mcp.py)
@@ -31,6 +33,7 @@ from artifactbay_core import (  # noqa: E402
     USER_CONFIG,
     ApiError,
     Client,
+    build_standalone,
     collect_artifacts,
     collect_paths,
     load_config,
@@ -157,6 +160,43 @@ def cmd_push(cfg: dict, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pack(cfg: dict, args: argparse.Namespace) -> int:
+    """Build one self-contained HTML file — for presenting, with no server needed.
+
+    Two modes, because "share without ArtifactBay" means two different things:
+      pack <session-id>        pull a stored session down into a single file
+      pack --local a.html b.svg   package local files with no instance involved
+    """
+    if args.local or not args.target:
+        paths = ([args.target] if args.target else []) + args.paths
+        if not paths:
+            print(f"{C_ERR}nothing to pack{C_RST} — pass files, or a session id without --local")
+            return 1
+        artifacts, skipped = collect_paths(paths, cfg["allow_scripts"], cfg["redact"])
+        for s in skipped:
+            print(f"{C_DIM}skipped {s}{C_RST}")
+        if not artifacts:
+            print(f"{C_ERR}no packable files{C_RST}")
+            return 1
+        title = args.title or (Path(paths[0]).stem if len(artifacts) == 1 else Path.cwd().name)
+        html = build_standalone(title, artifacts,
+                                subtitle=f"{len(artifacts)} artifact(s)").encode()
+        out = Path(args.output or f"{title}.html")
+    else:
+        try:
+            html = Client(cfg).standalone(args.target, args.version)
+        except ApiError as e:
+            print(f"{C_ERR}✗ {e}{C_RST}")
+            return 1
+        out = Path(args.output or f"{args.target[:8]}.html")
+
+    out.write_bytes(html)
+    size = len(html) / 1024
+    print(f"{C_OK}✓ packed{C_RST} {out} ({size:.0f} KB)")
+    print(f"{C_DIM}  self-contained — open it directly, email it, or drop it on any static host{C_RST}")
+    return 0
+
+
 def cmd_share(cfg: dict, args: argparse.Namespace) -> int:
     try:
         if args.artifact:
@@ -209,6 +249,17 @@ def main(argv: list[str]) -> int:
     p_push.add_argument("--no-redact", action="store_true",
                         help="skip client-side secret stripping")
 
+    p_pack = sub.add_parser(
+        "pack", help="build a self-contained HTML file (no server needed to view it)")
+    p_pack.add_argument("target", nargs="?",
+                        help="session id to pack, or a file path when --local")
+    p_pack.add_argument("paths", nargs="*", help="extra files (implies --local)")
+    p_pack.add_argument("--local", action="store_true",
+                        help="pack local files without contacting ArtifactBay at all")
+    p_pack.add_argument("-o", "--output", help="output file (default: <title>.html)")
+    p_pack.add_argument("--title")
+    p_pack.add_argument("--version", type=int, help="session version to pack")
+
     p_share = sub.add_parser("share", help="mint a capability link")
     p_share.add_argument("id")
     p_share.add_argument("--artifact", action="store_true", help="share one artifact, not a session")
@@ -234,6 +285,8 @@ def main(argv: list[str]) -> int:
         return cmd_doctor(cfg)
     if a.cmd == "push":
         return cmd_push(cfg, a)
+    if a.cmd == "pack":
+        return cmd_pack(cfg, a)
     if a.cmd == "share":
         return cmd_share(cfg, a)
     if a.cmd == "ls":

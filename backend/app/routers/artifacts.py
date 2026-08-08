@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse, Response
 from sqlmodel import Session as DBSession
 
+from .. import standalone
 from ..auth import (
     Principal,
     artifact_readable,
@@ -131,6 +132,30 @@ def view_artifact(artifact_id: str, request: Request, db: DBSession = Depends(ge
             "Referrer-Policy": "no-referrer",
         },
     )
+
+
+@router.get("/{artifact_id}/standalone")
+def standalone_artifact(artifact_id: str, db: DBSession = Depends(get_session),
+                        t: str | None = Query(default=None),
+                        download: bool = Query(default=True),
+                        principal: Principal | None = Depends(optional_principal)) -> Response:
+    """This one artifact as a self-contained HTML file — no server, no account."""
+    art, data = _load(db, artifact_id, principal, t)
+    sess = db.get(Session, art.session_id)
+    html = standalone.build(
+        title=art.name,
+        subtitle=f"{art.type.value} · {art.size_bytes} bytes"
+                 + (f" · from “{sess.name}”" if sess else ""),
+        artifacts=[{"name": art.name, "type": art.type.value, "data": data,
+                    "allow_scripts": art.allow_scripts}],
+        footer=f"{art.name} — standalone export, no network required.",
+    )
+    headers = {"Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"}
+    if download:
+        stem = art.name.rsplit(".", 1)[0] or "artifact"
+        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in stem)[:60]
+        headers["Content-Disposition"] = f'attachment; filename="{safe}.html"'
+    return Response(content=html, media_type="text/html; charset=utf-8", headers=headers)
 
 
 @router.post("/{artifact_id}/share", response_model=ShareOut)

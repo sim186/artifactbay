@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from artifactbay_core import (  # noqa: E402
     ApiError,
     Client,
+    build_standalone,
     collect_paths,
     load_config,
     make_conversation_artifact,
@@ -178,6 +179,34 @@ TOOLS = [
                            "description": "Invalidate the previous link and mint a new one"},
             },
             "required": ["id"],
+        },
+    },
+    {
+        "name": "pack_standalone",
+        "description": (
+            "Build ONE self-contained HTML file that renders the artifacts offline — no "
+            "ArtifactBay, no account, no network needed to view it. Use for presenting, "
+            "emailing a deliverable, or handing work to someone outside the team. Pass "
+            "`session_id` to pack a stored session, or `content`/`paths` to pack something "
+            "that was never pushed at all."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "output": {"type": "string",
+                           "description": "Output file path, e.g. './roadmap.html'"},
+                "session_id": {"type": "string", "description": "Pack a stored session"},
+                "paths": {"type": "array", "items": {"type": "string"},
+                          "description": "Pack local files instead (no server contacted)"},
+                "content": {"type": "string",
+                            "description": "Pack inline content directly, never pushing it"},
+                "name": {"type": "string", "description": "Filename for inline content"},
+                "type": {"type": "string", "enum": ARTIFACT_TYPES},
+                "allow_scripts": {"type": "boolean",
+                                  "description": "Let inline HTML run JS in its sandbox"},
+                "title": {"type": "string"},
+            },
+            "required": ["output"],
         },
     },
     {
@@ -329,6 +358,40 @@ def tool_share(args: dict) -> str:
             f"{out['url']}")
 
 
+def tool_pack_standalone(args: dict) -> str:
+    cfg = _cfg(args)
+    out = Path(args["output"]).expanduser()
+
+    if args.get("session_id"):
+        html = Client(cfg).standalone(args["session_id"])
+        source = f"session {args['session_id']}"
+    elif args.get("content"):
+        name = args.get("name") or "artifact.html"
+        artifact = {
+            "name": name, "type": args.get("type") or "html", "encoding": "utf8",
+            "content": redact(args["content"])[0] if cfg["redact"] else args["content"],
+        }
+        if args.get("allow_scripts"):
+            artifact["allow_scripts"] = True
+        html = build_standalone(args.get("title") or name, [artifact]).encode()
+        source = "inline content (never uploaded)"
+    elif args.get("paths"):
+        artifacts, skipped = collect_paths(args["paths"], cfg["allow_scripts"], cfg["redact"])
+        if not artifacts:
+            return f"Nothing packable in {args['paths']}."
+        html = build_standalone(args.get("title") or out.stem, artifacts,
+                                subtitle=f"{len(artifacts)} artifact(s)").encode()
+        source = f"{len(artifacts)} local file(s)" + (f"; skipped {', '.join(skipped)}" if skipped else "")
+    else:
+        return "Give one of: session_id, content, or paths."
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(html)
+    return (f"Packed {source} → {out} ({len(html) / 1024:.0f} KB).\n"
+            f"Self-contained: open it directly, email it, or drop it on any static host. "
+            f"No ArtifactBay needed to view it.")
+
+
 def tool_doctor(args: dict) -> str:
     cfg = _cfg(args)
     client = Client(cfg)
@@ -360,6 +423,7 @@ HANDLERS = {
     "get_session": tool_get_session,
     "get_artifact": tool_get_artifact,
     "share": tool_share,
+    "pack_standalone": tool_pack_standalone,
     "doctor": tool_doctor,
 }
 

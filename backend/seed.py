@@ -22,8 +22,11 @@ summary{cursor:pointer;font-weight:600}</style></head>
 <li><code>blob</code> — content-addressed by sha256</li></ul></details>
 <details><summary>Why content-addressing?</summary>
 <p>Store-once, ref-many. Re-uploading identical bytes dedupes automatically.</p></details>
-<svg width=300 height=80><rect width=300 height=80 rx=8 fill=#6366f1/>
-<text x=150 y=46 text-anchor=middle fill=white font-family=monospace font-size=14>session &#8594; artifact &#8594; blob</text></svg>
+<!-- Quote attribute values: in HTML an unquoted value swallows a trailing "/",
+     so fill=#6366f1/> parses as the colour "#6366f1/" and the shape renders black. -->
+<svg width="300" height="80" xmlns="http://www.w3.org/2000/svg">
+<rect width="300" height="80" rx="8" fill="#6366f1"></rect>
+<text x="150" y="46" text-anchor="middle" fill="#ffffff" font-family="monospace" font-size="14">session &#8594; artifact &#8594; blob</text></svg>
 </body></html>"""
 
 API_HTML = """<!doctype html><html><head><meta charset=utf-8>

@@ -12,6 +12,7 @@ from sqlalchemy import and_, func, or_
 from sqlmodel import Session as DBSession
 from sqlmodel import col, select
 
+from .. import standalone
 from ..auth import (
     Principal,
     optional_principal,
@@ -475,6 +476,50 @@ def export_session(
             "Referrer-Policy": "no-referrer",
         },
     )
+
+
+@router.get("/sessions/{session_id}/standalone")
+def standalone_session(
+    session_id: str,
+    version: int | None = Query(default=None),
+    t: str | None = Query(default=None),
+    download: bool = Query(default=True),
+    db: DBSession = Depends(get_session),
+    principal: Principal | None = Depends(optional_principal),
+) -> Response:
+    """One self-contained HTML file with every artifact inlined.
+
+    For presenting and for handing work to people who shouldn't need an account,
+    a URL, or a network. A capability link always points back at a running
+    instance; this doesn't.
+    """
+    sess = db.get(Session, session_id)
+    if sess is None or not session_readable(sess, principal, t):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    req_ver = version or sess.version
+    arts = _visible_artifacts(db, sess, req_ver, principal)
+
+    payload = []
+    for a in arts:
+        blob = db.get(Blob, a.content_hash)
+        if blob is not None:
+            payload.append({"name": a.name, "type": a.type.value, "data": blob.data,
+                            "allow_scripts": a.allow_scripts})
+
+    bits = [sess.agent, f"v{req_ver}", sess.updated_at.strftime("%Y-%m-%d")]
+    if sess.model:
+        bits.insert(1, sess.model)
+    html = standalone.build(
+        title=sess.name,
+        subtitle=" · ".join(bits),
+        artifacts=payload,
+        footer=f"{sess.name} — standalone export, no network required. ← → to switch artifacts.",
+    )
+    headers = {"Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"}
+    if download:
+        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in sess.name)[:60] or "session"
+        headers["Content-Disposition"] = f'attachment; filename="{safe}-v{req_ver}.html"'
+    return Response(content=html, media_type="text/html; charset=utf-8", headers=headers)
 
 
 @router.post("/sessions/{session_id}/share", response_model=ShareOut)

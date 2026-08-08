@@ -22,6 +22,7 @@ project, and no file writing:
 | `get_artifact` | Read back a past artifact's content |
 | `get_session` / `list_sessions` | Browse history |
 | `share` | Mint a view link for a session or a single artifact |
+| `pack_standalone` | Build one self-contained HTML file that opens offline (for presenting) |
 
 Set it up once per machine (not per project):
 
@@ -68,7 +69,15 @@ CLI="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/artifactbay-push}/artifactbay_cl
    python3 "$CLI" ls -q "ledger"    # search past sessions
    python3 "$CLI" share <id>        # mint a view link (--artifact for one file)
    python3 "$CLI" push --resume     # flush pushes queued while the server was down
+   python3 "$CLI" pack <id> -o out.html          # self-contained file, viewable offline
+   python3 "$CLI" pack --local a.html b.svg -o deck.html   # …with no server at all
    ```
+
+### Presenting
+
+When the user wants to *show* something — a demo, a review, a deck — prefer
+`pack_standalone` over a share link. It produces one HTML file that opens with no
+network, no account and no ArtifactBay, so it survives conference-room wifi and email.
 
 Supported types: `.html .md .json .svg .png .pdf .zip .txt`.
 

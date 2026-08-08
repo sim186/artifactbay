@@ -71,6 +71,13 @@ export function SessionPage() {
             ⓘ
           </button>
           <a
+            href={api.standaloneUrl(s.id, s.requested_version, t)}
+            className="rounded-md border border-border px-2 py-1 text-xs leading-none text-text-dim hover:bg-surface-2 hover:text-text"
+            title="Download as one self-contained HTML file — opens offline, no account needed. For presenting."
+          >
+            ▤
+          </a>
+          <a
             href={api.exportUrl(s.id, s.requested_version, t)}
             className="rounded-md border border-border px-2 py-1 text-xs leading-none text-text-dim hover:bg-surface-2 hover:text-text"
             title="Download this version as a zip (artifacts + manifest)"

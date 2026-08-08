@@ -497,6 +497,56 @@ def main() -> None:
     assert len(kept) <= settings.max_conversation_messages
     assert kept[-1]["content"] == "message 4999", "trimming keeps the most recent turns"
 
+    # ── standalone export (shareable with no ArtifactBay at all) ──────────
+    r = client.get(f"/v0/sessions/{conv_sid}/standalone?download=false")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    owner_pack = r.text
+    assert "<!doctype html>" in owner_pack.lower()
+    assert "Ledger report" in owner_pack, "artifact body must be inlined"
+    assert "build the ledger report" in owner_pack, "owner's own pack keeps the transcript"
+    # Self-contained: nothing may be fetched at view time.
+    assert 'src="http' not in owner_pack and 'href="http' not in owner_pack
+    # Untrusted artifact HTML stays sandboxed, and never same-origin.
+    assert "<iframe" in owner_pack and "sandbox=" in owner_pack
+    assert "allow-same-origin" not in owner_pack
+
+    r = client.get(f"/v0/sessions/{conv_sid}/standalone")
+    assert "attachment;" in r.headers.get("content-disposition", "")
+
+    # An anonymous share-link pack must not smuggle the transcript out either.
+    anon_pack = anon.get(f"/v0/sessions/{conv_sid}/standalone?t={share_token}&download=false").text
+    assert "Ledger report" in anon_pack
+    assert "build the ledger report" not in anon_pack, "share-link pack leaked the transcript"
+
+    # Single artifact, packed on its own.
+    r = client.get(f"/v0/artifacts/{html_aid}/standalone?download=false")
+    assert r.status_code == 200 and "Ledger report" in r.text
+    assert anon.get(f"/v0/artifacts/{conv_aid}/standalone?t={share_token}").status_code == 404
+
+    # Scripts stay off unless the artifact opted in.
+    script_sid = client.post("/v0/sessions", json={
+        "name": "interactive deck", "agent": "claude-code",
+        "artifacts": [
+            {"name": "static.html", "type": "html", "content": "<p>plain</p>"},
+            {"name": "deck.html", "type": "html", "content": "<p>interactive</p>",
+             "allow_scripts": True},
+        ],
+    }, headers=H).json()["id"]
+    pack = client.get(f"/v0/sessions/{script_sid}/standalone?download=false").text
+    assert pack.count('sandbox=""') == 1, "non-scripted artifact must get an empty sandbox"
+    assert pack.count('sandbox="allow-scripts"') == 1
+
+    # Markdown is rendered, and hostile markdown cannot inject markup.
+    md_sid = client.post("/v0/sessions", json={
+        "name": "md pack", "agent": "claude-code",
+        "artifacts": [{"name": "doc.md", "type": "markdown",
+                       "content": "# Heading\n\n- item **bold**\n\n<script>alert(1)</script>"}],
+    }, headers=H).json()["id"]
+    pack = client.get(f"/v0/sessions/{md_sid}/standalone?download=false").text
+    assert "<h1>Heading</h1>" in pack and "<strong>bold</strong>" in pack
+    assert "<script>alert(1)</script>" not in pack
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in pack
+
     # ── FTS highlight snippets (Postgres only) ────────────────────────────
     # The headline is selected alongside the row rather than fetched per result;
     # SQLModel's exec() unwraps single-entity selects to scalars, which silently

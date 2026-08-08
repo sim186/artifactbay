@@ -245,6 +245,11 @@ export const api = {
     req<CreateSessionOut>('POST', `/v0/sessions/${id}/artifacts`, { artifacts }),
   exportUrl: (id: string, version?: number, t?: string) =>
     `/v0/sessions/${id}/export${viewQs(version, t)}`,
+  // One self-contained HTML file — opens offline, needs no ArtifactBay to view.
+  standaloneUrl: (id: string, version?: number, t?: string) =>
+    `/v0/sessions/${id}/standalone${viewQs(version, t)}`,
+  artifactStandaloneUrl: (id: string, t?: string) =>
+    `/v0/artifacts/${id}/standalone${viewQs(undefined, t)}`,
 
   // catalog — the vocabularies the filters are built from
   projects: () => get<ProjectInfo[]>('/v0/projects'),

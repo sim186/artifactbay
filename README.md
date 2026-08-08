@@ -27,6 +27,7 @@ ArtifactBay is a **session-centric artifact repository** designed specifically f
 - **Safe rendering** — untrusted HTML runs in a sandboxed, cross-origin `<iframe>` under a strict CSP; scripts are off unless explicitly opted in.
 - **Content-addressed storage** — blobs deduped by SHA-256 with reference-counted garbage collection.
 - **Capability links** — share a whole session *or a single artifact* via an unguessable secret URL. Viewers need no account, links are revocable, and shared links unfurl with a proper preview card in Slack/Discord/iMessage.
+- **Standalone export** — pack anything into **one self-contained HTML file** that renders offline with no ArtifactBay, no account and no network. For presenting, emailing, or handing work to people outside the team.
 - **Client-side redaction** — credential-shaped strings are stripped before anything leaves your machine.
 - **Export** — download any version as a zip with a manifest. Your data comes back out.
 - **Collections** — group sessions into saved searches or manual pins.
@@ -186,6 +187,31 @@ Per-agent shims live in [`integrations/`](integrations/):
 | **OpenCode** | MCP server | `/artifactbay` command |
 | **Aider** | — | `post-commit` hook (auto-push on commit) |
 
+### Presenting without ArtifactBay
+
+A capability link still points at a running instance — no good on a conference-room
+laptop with no network, in an email attachment, or for someone who should never touch
+your server. `pack` builds **one self-contained HTML file** instead: artifacts inlined
+(HTML into sandboxed `srcdoc`, images and PDFs as `data:` URIs), a tab bar, arrow-key
+navigation, and zero network requests when opened.
+
+```bash
+# Pack a stored session
+artifactbay pack <session-id> -o review.html
+
+# …or pack local files with no instance involved at all
+artifactbay pack --local report.html chart.svg notes.md --title "Q3 review" -o deck.html
+```
+
+From the UI, the **▤** button on a session downloads the same file. Agents get it as the
+`pack_standalone` MCP tool, which can also pack content inline that was never pushed
+anywhere.
+
+Untrusted artifact HTML stays sandboxed inside the packed file — an `<iframe>` with no
+`allow-same-origin`, and scripts only for artifacts explicitly marked `allow_scripts`.
+Owner-only transcripts are included when *you* pack your own session and excluded when
+the pack is produced through a share link.
+
 ### Conversation slices, not conversation archives
 
 `push_artifact` accepts a `conversation` array: the few turns that produced the artifact.
@@ -216,9 +242,11 @@ session cookie (web UI). `?t=<token>` is a capability token.
 | `POST` | `/v0/sessions/{id}/artifacts` | **append to the current version** — no full re-upload |
 | `GET` | `/v0/sessions/{id}/versions` | version history with timestamps, counts and sizes |
 | `GET` | `/v0/sessions/{id}/export` | download a version as a zip + manifest |
+| `GET` | `/v0/sessions/{id}/standalone` | **one self-contained HTML file** — renders offline, no ArtifactBay needed |
 | `POST` `DELETE` | `/v0/sessions/{id}/share` | mint/rotate/revoke a session link |
 | `GET` | `/v0/artifacts/{id}` `…/meta` `…/view` | raw bytes / metadata / sandboxed render |
 | `POST` `DELETE` | `/v0/artifacts/{id}/share` | **per-artifact** capability link |
+| `GET` | `/v0/artifacts/{id}/standalone` | that one artifact as a self-contained file |
 | `DELETE` | `/v0/artifacts/{id}` | remove one artifact, release its blob |
 | `GET` | `/v0/projects` `/v0/tags` | the vocabularies the list filters use |
 | `GET` `POST` | `/v0/collections` | saved queries + manual pins |

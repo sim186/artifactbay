@@ -63,6 +63,7 @@ Credentials come from the config file written by `init`. To override per server,
 | `list_sessions` / `get_session` | Browse history |
 | `get_artifact` | Read a past artifact's content back |
 | `share` | Mint a capability link for a session or a single artifact |
+| `pack_standalone` | Build one self-contained HTML file — opens offline, no ArtifactBay needed |
 | `doctor` | Connectivity, auth and server capabilities |
 
 ## CLI
@@ -74,6 +75,8 @@ artifactbay push report.html diagram.svg      # push files BY PATH — no stagin
 artifactbay push --name "Ledger redesign"     # or push whatever is staged
 artifactbay ls -q ledger                      # search past sessions
 artifactbay share <session-id>                # capability link (--artifact for one file)
+artifactbay pack <session-id> -o out.html     # self-contained file — no server to view it
+artifactbay pack --local a.html b.svg -o deck.html   # …packed with no instance involved
 artifactbay push --resume                     # flush queued (offline) pushes
 artifactbay mcp                               # run the MCP server on stdio
 ```
@@ -89,6 +92,23 @@ artifactbay mcp                               # run the MCP server on stdio
   404 and creates a fresh session.)
 - **Idempotent** (Idempotency-Key) and **fail-open** (never crashes the agent; queues to
   `.artifactbay/pending/`).
+
+## Presenting without ArtifactBay
+
+A capability link points at a running instance. `pack` instead produces **one
+self-contained HTML file**: artifacts inlined (HTML into sandboxed `srcdoc`, images and
+PDFs as `data:` URIs), a tab bar and arrow-key navigation, and no network requests when
+opened. Open it over `file://`, email it, or drop it on any static host.
+
+Two modes, because "share without ArtifactBay" means two things:
+
+- `pack <session-id>` — pull a stored session down into a single file.
+- `pack --local FILES` — package files that were never pushed anywhere. No server is
+  contacted, so this works with no instance at all.
+
+Artifact HTML stays sandboxed inside the packed file (no `allow-same-origin`; scripts
+only where `allow_scripts` was set). Owner-only transcripts are included when you pack
+your own session, and excluded when the pack comes from a share link.
 
 ## Conversation slices
 
