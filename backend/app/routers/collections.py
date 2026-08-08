@@ -1,12 +1,12 @@
 """Collections = saved query + manually pinned sessions (hybrid). Owner-scoped."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 from sqlmodel import Session as DBSession
 from sqlmodel import col, select
 
-from ..auth import Principal, optional_principal, require_user
+from ..auth import Principal, require_user, session_owned_by
 from ..db import get_session
 from ..models import Collection, Session, Visibility
 from ..schemas import SessionListOut
@@ -18,6 +18,13 @@ router = APIRouter(prefix="/v0/collections", tags=["collections"])
 class CollectionIn(BaseModel):
     name: str
     query: dict = {}  # {agent?, favorite?, tag?, q?}
+
+
+class CollectionPatch(BaseModel):
+    """Partial edit. Omitted fields are left alone (rename without resending the query)."""
+
+    name: str | None = None
+    query: dict | None = None
 
 
 class CollectionOut(BaseModel):
@@ -69,6 +76,21 @@ def get_collection(collection_id: str, p: Principal = Depends(require_user),
     return _out(_owned(db, collection_id, p))
 
 
+@router.patch("/{collection_id}", response_model=CollectionOut)
+def update_collection(collection_id: str, body: CollectionPatch,
+                      p: Principal = Depends(require_user),
+                      db: DBSession = Depends(get_session)) -> CollectionOut:
+    """Rename a collection or edit its saved query in place."""
+    c = _owned(db, collection_id, p)
+    data = body.model_dump(exclude_unset=True)
+    for field, value in data.items():
+        setattr(c, field, value)
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return _out(c)
+
+
 @router.delete("/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_collection(collection_id: str, p: Principal = Depends(require_user),
                       db: DBSession = Depends(get_session)) -> Response:
@@ -104,33 +126,52 @@ def unpin_session(collection_id: str, session_id: str, p: Principal = Depends(re
 
 
 @router.get("/{collection_id}/sessions", response_model=SessionListOut)
-def resolve_collection(collection_id: str, p: Principal = Depends(require_user),
+def resolve_collection(collection_id: str, request: Request,
+                       p: Principal = Depends(require_user),
                        db: DBSession = Depends(get_session),
                        limit: int = Query(default=50, le=200),
                        offset: int = Query(default=0, ge=0)) -> SessionListOut:
-    """Members = sessions matching the saved query ∪ manually pinned sessions."""
+    """Members = manually pinned sessions, then sessions matching the saved query.
+
+    Pins lead (they're the deliberate picks) and are excluded from the query half
+    so the two never double-count. Only the query half is paginated in SQL; pins
+    are bounded by how many the user pinned.
+    """
     c = _owned(db, collection_id, p)
     q = c.query or {}
+
+    # Pinned sessions the caller may actually see.
+    pinned_rows = []
+    for sid in c.pinned:
+        s = db.get(Session, sid)
+        if s is not None and (session_owned_by(s, p) or s.visibility == Visibility.public):
+            pinned_rows.append(s)
+    pinned_ids = [s.id for s in pinned_rows]
+
     # Only run the saved query if it actually has a filter — an empty query means
     # "manual-only" (just the pins), NOT "match everything".
     has_filter = any(q.get(k) for k in ("agent", "project_id", "favorite", "tag", "q"))
-    matched = []
+    matched: list = []
+    matched_total = 0
     if has_filter:
-        matched, _ = query_sessions(
-            db, p, agent=q.get("agent"), favorite=q.get("favorite"),
-            tag=q.get("tag"), q=q.get("q"), limit=200,
-        )
-    seen = {s.id for s in matched}
-    # pinned first (so manual picks lead), then query matches not already present
-    pinned_summaries = []
-    for sid in c.pinned:
-        if sid in seen:
-            continue
-        s = db.get(Session, sid)
-        if s and (s.visibility == Visibility.public or p is not None):
-            pinned_summaries.append(summarize(db, s))
-            seen.add(sid)
-    members = pinned_summaries + matched
-    total = len(members)
-    sliced_members = members[offset:offset + limit]
-    return SessionListOut(sessions=sliced_members, total=total)
+        # Offset within the query half, after the pinned block is consumed.
+        query_offset = max(0, offset - len(pinned_ids))
+        query_limit = max(0, limit - max(0, len(pinned_ids) - offset))
+        if query_limit:
+            matched, matched_total = query_sessions(
+                db, p, request, agent=q.get("agent"), project_id=q.get("project_id"),
+                favorite=q.get("favorite"), tag=q.get("tag"), q=q.get("q"),
+                exclude_ids=pinned_ids, limit=query_limit, offset=query_offset,
+            )
+        else:
+            _, matched_total = query_sessions(
+                db, p, request, agent=q.get("agent"), project_id=q.get("project_id"),
+                favorite=q.get("favorite"), tag=q.get("tag"), q=q.get("q"),
+                exclude_ids=pinned_ids, limit=1, offset=0,
+            )
+
+    pinned_page = [summarize(db, s, request) for s in pinned_rows[offset:offset + limit]]
+    return SessionListOut(
+        sessions=pinned_page + matched,
+        total=len(pinned_ids) + matched_total,
+    )

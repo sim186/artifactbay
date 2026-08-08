@@ -7,12 +7,6 @@ import { STATIC_COLLECTIONS } from '../lib/collections'
 import { useTheme } from '../theme'
 import { ArtifactBayMark } from './Logo'
 
-function topTags(sessions: SessionSummary[], n = 6): string[] {
-  const counts = new Map<string, number>()
-  for (const s of sessions) for (const t of s.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([t]) => t)
-}
-
 function groupByAgent(sessions: SessionSummary[]): [string, SessionSummary[]][] {
   const m = new Map<string, SessionSummary[]>()
   for (const s of sessions) {
@@ -32,7 +26,11 @@ export function Sidebar({ onOpenSearch, onClose }: { onOpenSearch: () => void; o
   const params = useParams({ strict: false }) as { sessionId?: string }
   const sessions = data?.sessions ?? []
   const groups = groupByAgent(sessions)
-  const tags = topTags(sessions)
+  // Tags come from the server, counted across every visible session. Deriving
+  // them from `sessions` only ever saw the first page once listing became
+  // properly paginated.
+  const { data: tagInfo } = useQuery({ queryKey: ['tags'], queryFn: api.tags })
+  const tags = (tagInfo ?? []).slice(0, 6).map((t) => t.tag)
   const { user, logout } = useAuth()
   const { theme, toggle } = useTheme()
   const qc = useQueryClient()

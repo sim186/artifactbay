@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link, useParams } from '@tanstack/react-router'
+import { Link, useParams, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api } from '../api'
 import { ArtifactViewer } from '../components/ArtifactViewer'
@@ -8,10 +8,12 @@ import { formatBytes } from '../lib/agent'
 // The hero. Near-fullscreen artifact with minimal floating chrome.
 export function ArtifactPage() {
   const { artifactId } = useParams({ from: '/a/$artifactId' })
+  // Present when this artifact was reached through its own capability link.
+  const { t } = useSearch({ from: '/a/$artifactId' })
   const [showMeta, setShowMeta] = useState(false)
   const { data: a, isLoading, error } = useQuery({
-    queryKey: ['artifact', artifactId],
-    queryFn: () => api.artifactMeta(artifactId),
+    queryKey: ['artifact', artifactId, t],
+    queryFn: () => api.artifactMeta(artifactId, t),
   })
 
   if (isLoading) return <p className="p-8 text-sm text-text-faint">Loading…</p>
@@ -21,13 +23,17 @@ export function ArtifactPage() {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-border px-4 py-2">
-        <Link
-          to="/s/$sessionId"
-          params={{ sessionId: a.session_id }}
-          className="text-sm text-text-dim hover:text-text"
-        >
-          ← {a.session_name}
-        </Link>
+        {t ? (
+          <span className="text-sm text-text-dim">{a.session_name}</span>
+        ) : (
+          <Link
+            to="/s/$sessionId"
+            params={{ sessionId: a.session_id }}
+            className="text-sm text-text-dim hover:text-text"
+          >
+            ← {a.session_name}
+          </Link>
+        )}
         <span className="font-mono text-xs text-text-faint">/ {a.name}</span>
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -37,7 +43,7 @@ export function ArtifactPage() {
             {showMeta ? 'Hide' : 'Metadata'}
           </button>
           <a
-            href={api.artifactRaw(a.id)}
+            href={api.artifactRaw(a.id, t)}
             target="_blank"
             rel="noreferrer"
             className="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-2"
@@ -45,7 +51,7 @@ export function ArtifactPage() {
             Open raw ↗
           </a>
           <a
-            href={api.artifactRaw(a.id)}
+            href={api.artifactRaw(a.id, t)}
             download={a.name}
             className="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-2"
           >
@@ -56,7 +62,7 @@ export function ArtifactPage() {
 
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1">
-          <ArtifactViewer artifact={a} />
+          <ArtifactViewer artifact={a} token={t} />
         </div>
         {showMeta && (
           <aside className="w-72 shrink-0 overflow-y-auto border-l border-border bg-surface p-4 text-sm">

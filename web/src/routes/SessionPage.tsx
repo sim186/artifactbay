@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useParams, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api } from '../api'
-import { useAuth } from '../auth'
 import { AddToCollection } from '../components/AddToCollection'
 import { AgentBadge } from '../components/AgentBadge'
 import { ArtifactViewer } from '../components/ArtifactViewer'
@@ -14,7 +13,6 @@ import { formatBytes } from '../lib/agent'
 export function SessionPage() {
   const { sessionId } = useParams({ from: '/s/$sessionId' })
   const { t } = useSearch({ from: '/s/$sessionId' })
-  const { user } = useAuth()
   const [version, setVersion] = useState<number | undefined>(undefined)
   const [selected, setSelected] = useState(0)
   const [showInfo, setShowInfo] = useState(false)
@@ -24,12 +22,26 @@ export function SessionPage() {
     queryFn: () => api.session(sessionId, version, t),
   })
 
+  // Real version history — timestamps and per-version artifact counts, rather
+  // than a list synthesised from the version number alone.
+  const { data: history } = useQuery({
+    queryKey: ['versions', sessionId, t],
+    queryFn: () => api.versions(sessionId, t),
+  })
+
   if (isLoading) return <p className="p-8 text-sm text-text-faint">Loading…</p>
   if (error || !s)
     return <p className="p-8 text-sm text-red-400">Session not found or API offline.</p>
 
   const artifact = s.artifacts[selected]
-  const versions = Array.from({ length: s.version }, (_, i) => i + 1)
+  const versions =
+    history?.versions ??
+    Array.from({ length: s.version }, (_, i) => ({
+      version: i + 1, artifact_count: 0, total_bytes: 0, created_at: '',
+    }))
+  // Owner-only controls follow actual ownership, not "is anyone logged in" —
+  // a logged-in visitor opening someone else's share link is not the owner.
+  const isOwner = s.is_owner
 
   return (
     <div className="flex h-full flex-col">
@@ -58,9 +70,16 @@ export function SessionPage() {
           >
             ⓘ
           </button>
-          {user && <ShareButton sessionId={s.id} shareUrl={s.share_url} />}
-          {user && <AddToCollection sessionId={s.id} />}
-          {user && <FavoriteButton id={s.id} favorite={s.favorite} />}
+          <a
+            href={api.exportUrl(s.id, s.requested_version, t)}
+            className="rounded-md border border-border px-2 py-1 text-xs leading-none text-text-dim hover:bg-surface-2 hover:text-text"
+            title="Download this version as a zip (artifacts + manifest)"
+          >
+            ⤓
+          </a>
+          {isOwner && <ShareButton sessionId={s.id} shareUrl={s.share_url} />}
+          {isOwner && <AddToCollection sessionId={s.id} />}
+          {isOwner && <FavoriteButton id={s.id} favorite={s.favorite} />}
           {/* version timeline */}
           <div className="flex items-center gap-2">
             <div className="relative flex items-center">
@@ -74,8 +93,11 @@ export function SessionPage() {
                 className="appearance-none rounded-md border border-border bg-surface pl-2.5 pr-7 py-1 font-mono text-xs text-text-dim hover:text-text hover:bg-surface-2 focus:border-accent focus:outline-none cursor-pointer"
               >
                 {versions.map((v) => (
-                  <option key={v} value={v}>
-                    v{v} {v === s.version ? '(latest)' : ''}
+                  <option key={v.version} value={v.version}>
+                    v{v.version}
+                    {v.created_at ? ` · ${v.created_at.slice(0, 10)}` : ''}
+                    {v.artifact_count ? ` · ${v.artifact_count} file(s)` : ''}
+                    {v.version === s.version ? ' (latest)' : ''}
                   </option>
                 ))}
               </select>
@@ -94,18 +116,29 @@ export function SessionPage() {
             <p className="px-2 py-2 text-xs text-text-faint">No artifacts in this version.</p>
           )}
           {s.artifacts.map((a, i) => (
-            <button
+            <div
               key={a.id}
-              onClick={() => setSelected(i)}
-              className={`mb-1 flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left ${
-                i === selected ? 'bg-accent-soft text-text' : 'text-text-dim hover:bg-surface-2'
+              className={`mb-1 flex items-center gap-1 rounded-md pr-1 ${
+                i === selected ? 'bg-accent-soft' : 'hover:bg-surface-2'
               }`}
             >
-              <span className="truncate text-sm">{a.name}</span>
-              <span className="font-mono text-[10px] text-text-faint">
-                {a.type} · {formatBytes(a.size_bytes)}
-              </span>
-            </button>
+              <button
+                onClick={() => setSelected(i)}
+                className={`flex min-w-0 flex-1 flex-col items-start gap-0.5 px-2 py-1.5 text-left ${
+                  i === selected ? 'text-text' : 'text-text-dim'
+                }`}
+              >
+                <span className="w-full truncate text-sm">{a.name}</span>
+                <span className="font-mono text-[10px] text-text-faint">
+                  {a.type} · {formatBytes(a.size_bytes)}
+                  {/* Provenance, kept out of every share link. */}
+                  {a.owner_only && ' · private'}
+                </span>
+              </button>
+              {isOwner && (
+                <ShareButton sessionId={a.id} shareUrl={a.share_url ?? null} kind="artifact" />
+              )}
+            </div>
           ))}
         </div>
 

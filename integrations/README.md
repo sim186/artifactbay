@@ -1,61 +1,138 @@
 # ArtifactBay Agent Integrations
 
-How AI agents push sessions to ArtifactBay. Protocol spec: `../docs/02-agent-integration-protocol.md`.
+How AI agents talk to ArtifactBay. Protocol spec: `../docs/02-agent-integration-protocol.md`.
 
-## Engine: `artifactbay_cli.py`
-Stdlib-only Python (no `pip install`) so it drops into any agent's shell.
+There are two front ends over one engine (`artifactbay_core.py`):
+
+| | Use it when | Configured |
+|---|---|---|
+| **MCP server** (`artifactbay_mcp.py`) | the agent speaks MCP (Claude Code, Codex, Cursor, …) | **once per machine** |
+| **CLI** (`artifactbay_cli.py`) | hooks, CI, shell, agents without MCP | once per machine |
+
+**Prefer MCP.** It is registered at user scope, carries the URL and key in its own
+environment, and is then available to every project — which is the whole answer to
+"I have to tell every project where and how to push". It also exposes the *read* path
+(`search_artifacts`, `get_artifact`), so an agent can find what a past session already
+built instead of rebuilding it.
+
+## One-time setup
 
 ```bash
-export ARTIFACTBAY_URL=http://localhost:8080   # self-hosted: full origin, e.g. https://artifacts.example.com (valid TLS — no skip-verify)
-export ARTIFACTBAY_KEY=ab_...          # write key — keep in env, never commit
+# 1. Machine-wide config — every project inherits it, none needs its own.
+python3 artifactbay_cli.py init --url https://artifacts.example.com --key ab_...
+#    → writes ~/.config/artifactbay/config.json (chmod 600)
 
-python3 artifactbay_cli.py doctor       # check connectivity + auth + artifacts
-python3 artifactbay_cli.py push --name "My session"
-python3 artifactbay_cli.py push --resume # flush any queued (offline) pushes
-python3 artifactbay_cli.py push --dry-run
+# 2. Put `artifactbay` on PATH (optional but handy)
+ln -s "$PWD/artifactbay" /usr/local/bin/artifactbay
+
+# 3. Register the MCP server with your agent (see table below)
 ```
 
-- Collects artifacts from `.artifactbay/artifacts/` (`ARTIFACTBAY_ARTIFACTS_DIR` to change).
+Configuration resolves environment → `./.artifactbay/config.json` →
+`~/.config/artifactbay/config.json`, so a single project can still override the defaults
+without touching anything else.
+
+## MCP server
+
+Stdlib-only stdio server — no `pip install`, no virtualenv.
+
+```bash
+# Claude Code (user scope: available in every project)
+claude mcp add artifactbay --scope user -- python3 /path/to/integrations/artifactbay_mcp.py
+
+# Codex CLI — ~/.codex/config.toml
+[mcp_servers.artifactbay]
+command = "python3"
+args = ["/path/to/integrations/artifactbay_mcp.py"]
+
+# Cursor / Windsurf / generic — ~/.cursor/mcp.json
+{ "mcpServers": { "artifactbay": {
+    "command": "python3", "args": ["/path/to/integrations/artifactbay_mcp.py"] } } }
+```
+
+Credentials come from the config file written by `init`. To override per server, add an
+`env` block (`ARTIFACTBAY_URL`, `ARTIFACTBAY_KEY`).
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `push_artifact` | Save inline content; optionally attach a `conversation` slice |
+| `push_files` | Save existing files/directories by path |
+| `search_artifacts` | Full-text search over titles, tags and extracted artifact text |
+| `list_sessions` / `get_session` | Browse history |
+| `get_artifact` | Read a past artifact's content back |
+| `share` | Mint a capability link for a session or a single artifact |
+| `doctor` | Connectivity, auth and server capabilities |
+
+## CLI
+
+```bash
+artifactbay init                              # machine-wide config (once)
+artifactbay doctor                            # connectivity + auth + staged artifacts
+artifactbay push report.html diagram.svg      # push files BY PATH — no staging dir
+artifactbay push --name "Ledger redesign"     # or push whatever is staged
+artifactbay ls -q ledger                      # search past sessions
+artifactbay share <session-id>                # capability link (--artifact for one file)
+artifactbay push --resume                     # flush queued (offline) pushes
+artifactbay mcp                               # run the MCP server on stdio
+```
+
+- Explicit paths win; with none it reads `.artifactbay/artifacts/`
+  (`ARTIFACTBAY_ARTIFACTS_DIR` to change).
 - **Interactive HTML** (slide decks, dashboards): opt in to JS with
   `ARTIFACTBAY_ALLOW_SCRIPTS="deck.html,*.slides.html"` (comma globs). Matching HTML gets
   `allow_scripts=true` so it runs in the sandboxed iframe. Default: scripts off.
 - Reads git repo/branch/commit automatically.
-- Remembers the session in `.artifactbay/session_id` → re-push = new **version**. (Different server /
-  reset DB? The cached id won't exist there — the CLI detects the 404 and creates a fresh session.)
-- **Idempotent** (Idempotency-Key) and **fail-open** (never crashes the agent; queues to `.artifactbay/pending/`).
+- Remembers the session in `.artifactbay/session_id` → re-push = new **version**.
+  (Different server / reset DB? The cached id won't exist there — the client detects the
+  404 and creates a fresh session.)
+- **Idempotent** (Idempotency-Key) and **fail-open** (never crashes the agent; queues to
+  `.artifactbay/pending/`).
+
+## Conversation slices
+
+Both front ends can attach the transcript excerpt that produced an artifact. That slice is:
+
+- **scoped** — the few relevant turns, not a full session archive;
+- **owner-only** — withheld from every capability link and public view, so sharing the
+  work never ships the conversation behind it;
+- **trimmed server-side** — capped at `ARTIFACTBAY_MAX_CONVERSATION_BYTES` (512 KB) and
+  200 messages, newest kept;
+- **redacted client-side** — credential-shaped strings are stripped before upload.
+
+Storing *every* conversation from every agent is a deliberate non-goal: it has different
+scale, retention and privacy needs than artifacts, and the blob layer is content-addressed
+on whole bodies, which suits documents and not append-only logs.
 
 ## Trigger model
+
 - **Default = explicit.** Push when the user asks. Universal across agents.
-- **Opt-in = automatic.** A Stop hook auto-pushes on session end (Claude Code) — see `claude-code/stop-hook.md`.
+- **Opt-in = automatic.** A Stop hook auto-pushes on session end (Claude Code) — see
+  `claude-code/stop-hook.md`.
 
 ## Per-agent shims
-All shims call the **same** engine (`artifactbay_cli.py`, via the `artifactbay` wrapper).
-Adding an agent = a thin trigger around `push`.
 
-| Agent | Folder | Trigger | Mechanism |
-|-------|--------|---------|-----------|
-| Claude Code | `claude-code/artifactbay-push/` | explicit (+opt-in auto) | Skill `/artifactbay-push` + optional Stop hook |
-| Codex | `codex/AGENTS.md` | explicit | `AGENTS.md` instruction → agent runs `artifactbay push` |
-| Aider | `aider/` | **auto** | git `post-commit` hook (aider auto-commits) — captures diff + pushes |
-| OpenCode | `opencode/` | explicit | `AGENTS.md` instruction or `opencode.json` command |
-| Cursor | `cursor/` | explicit | `.cursor/rules` rule + VS Code task button |
+| Agent | Folder | Preferred | Fallback |
+|-------|--------|-----------|----------|
+| Claude Code | `claude-code/` | MCP server | Skill `/artifactbay-push` + optional Stop hook |
+| Codex | `codex/` | MCP server | `AGENTS.md` instruction → `artifactbay push` |
+| Cursor | `cursor/` | MCP server | `.cursor/rules` + VS Code task |
+| OpenCode | `opencode/` | MCP server | `/artifactbay` command |
+| Aider | `aider/` | — | git `post-commit` hook (auto-push on commit) |
 
-The `artifactbay` wrapper (`integrations/artifactbay`) puts `artifactbay doctor` / `artifactbay push`
-on PATH:
-```bash
-ln -s "$PWD/integrations/artifactbay" /usr/local/bin/artifactbay
-```
 Each shim sets `ARTIFACTBAY_AGENT=<name>` so sessions show the right agent badge.
 
-## Install the Claude Code skill
-Copy the skill where Claude Code looks for skills:
-```bash
-cp -r claude-code/artifactbay-push ~/.claude/skills/      # global
-# or  .claude/skills/  in a project
-```
-Then in Claude Code: `/artifactbay-push`. Set `ARTIFACTBAY_URL` + `ARTIFACTBAY_KEY` in your shell profile.
+`claude-code/artifactbay-push/` bundles copies of the three engine files so the skill is
+self-contained; keep them in sync with this directory when editing.
 
 ## Security
-- `ARTIFACTBAY_KEY` lives in the environment only. Never commit it.
-- Only files under `.artifactbay/artifacts/` + git metadata strings are sent — no repo-wide slurp.
+
+- The API key lives in `~/.config/artifactbay/config.json` (chmod 600) or the
+  environment. Never commit it.
+- Only the files you name (or those under `.artifactbay/artifacts/`) plus git metadata
+  strings are sent — no repo-wide slurp.
+- Credential-shaped strings (AWS/GitHub/Slack/OpenAI/Anthropic keys, JWTs, private keys,
+  `*_SECRET=` assignments) are redacted client-side before upload. Defence in depth, not
+  a licence to push secrets. `--no-redact` disables it.
 - HTML is stored as-is; the **server** sandboxes it on render (iframe + CSP), not the agent.

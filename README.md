@@ -18,14 +18,19 @@ ArtifactBay is a **session-centric artifact repository** designed specifically f
 
 ## ✨ Features
 
-- **One-command push** — any agent drops files in `.artifactbay/artifacts/` and runs `artifactbay push`. Idempotent and fail-open (never blocks the agent).
-- **Automatic versioning** — re-pushing the same session snapshots a new version; nothing is overwritten.
+- **MCP server** — register once per machine and every project can push *and search*. No per-project config, no staging directory, no env vars to plumb into each repo.
+- **Agents can read back** — `search_artifacts` / `get_artifact` let an agent find what a past session already built instead of rebuilding it. This is the difference between an archive and usable memory.
+- **Conversation provenance** — attach the transcript slice that produced an artifact. Stored **owner-only**, so a share link never ships the conversation behind the work.
+- **One-command push** — `artifactbay push report.html`, or drop files in `.artifactbay/artifacts/`. Idempotent and fail-open (never blocks the agent).
+- **Automatic versioning** — re-pushing snapshots a new version; nothing is overwritten. Artifacts can also be appended to the current version without a new snapshot.
 - **Full-text search** — find sessions by title, content, agent, model, or tags.
 - **Safe rendering** — untrusted HTML runs in a sandboxed, cross-origin `<iframe>` under a strict CSP; scripts are off unless explicitly opted in.
 - **Content-addressed storage** — blobs deduped by SHA-256 with reference-counted garbage collection.
-- **Capability links** — share a single session via an unguessable secret URL; viewers need no account, and the link is revocable.
+- **Capability links** — share a whole session *or a single artifact* via an unguessable secret URL. Viewers need no account, links are revocable, and shared links unfurl with a proper preview card in Slack/Discord/iMessage.
+- **Client-side redaction** — credential-shaped strings are stripped before anything leaves your machine.
+- **Export** — download any version as a zip with a manifest. Your data comes back out.
 - **Collections** — group sessions into saved searches or manual pins.
-- **Agent integrations** — drop-in shims for Claude Code, Codex, Cursor, Aider, and OpenCode.
+- **Agent integrations** — MCP server plus drop-in shims for Claude Code, Codex, Cursor, Aider, and OpenCode.
 
 <div align="center">
 <img src="images/artifactbay-details.png" alt="ArtifactBay session view" width="100%" />
@@ -129,38 +134,96 @@ For a fast inner-loop dev experience with hot-reloading:
 
 ---
 
-## 🤖 Pushing Artifacts From Your Agent
+## 🤖 Connecting Your Agents
 
-The whole point: let an agent save its output in one step. The engine is a stdlib-only Python CLI (`integrations/artifactbay_cli.py`), wrapped as `artifactbay` on your `PATH`.
+Configure **once per machine**, not once per project.
 
 ```bash
-# 1. Point the CLI at your instance (keep the key in your env, never commit it)
-export ARTIFACTBAY_URL=http://localhost:8080
-export ARTIFACTBAY_KEY=ab_...
+# 1. Machine-wide config — writes ~/.config/artifactbay/config.json (chmod 600)
+python3 integrations/artifactbay_cli.py init --url http://localhost:8080 --key ab_...
 
-# 2. Drop anything worth keeping into the artifacts dir
-mkdir -p .artifactbay/artifacts
-cp report.html architecture.svg .artifactbay/artifacts/
-
-# 3. Push — prints a shareable URL
-artifactbay push --name "Database redesign"
+# 2. Register the MCP server with your agent (Claude Code shown; others in integrations/)
+claude mcp add artifactbay --scope user -- python3 "$PWD/integrations/artifactbay_mcp.py"
 ```
 
+That's it. Every project on the machine can now push and search — no `.artifactbay/`
+setup, no environment variables, no shim committed to each repo.
+
+The MCP server is stdlib-only (no `pip install`) and exposes both directions:
+
+| Tool | What it does |
+|:---|:---|
+| `push_artifact` | Save inline content and get a URL; optionally attach a conversation slice |
+| `push_files` | Save existing files or directories by path |
+| `search_artifacts` | Full-text search over everything pushed before |
+| `get_artifact` | Read a past artifact's content back |
+| `list_sessions` / `get_session` | Browse history |
+| `share` | Mint a capability link for a session or one artifact |
+
+### Or use the CLI
+
+For hooks, CI, shells and agents that don't speak MCP:
+
+```bash
+artifactbay push report.html architecture.svg --name "Database redesign"
+artifactbay ls -q "ledger"        # search
+artifactbay share <session-id>    # capability link (--artifact for a single file)
+artifactbay doctor                # connectivity, auth, server capabilities
+```
+
+- **Paths are optional:** with none, it pushes whatever is in `.artifactbay/artifacts/`.
 - **Idempotent & fail-open:** safe to call on every run; if ArtifactBay is unreachable the push is queued to `.artifactbay/pending/` and the agent never crashes.
 - **Versioned:** the session id is remembered in `.artifactbay/session_id`, so a re-push becomes **v2** automatically.
-- **Preflight:** `artifactbay doctor` checks connectivity, auth, and staged artifacts.
+- **Redacted:** credential-shaped strings are stripped before upload.
 
-Per-agent shims (auto-trigger or slash command) live in [`integrations/`](integrations/):
+Per-agent shims live in [`integrations/`](integrations/):
 
-| Agent | Trigger |
-|:---|:---|
-| **Claude Code** | Skill `/artifactbay-push` (+ optional Stop hook for auto-push) |
-| **Codex CLI** | `AGENTS.md` instruction → `artifactbay push` |
-| **Cursor** | `.cursor/rules` + VS Code task |
-| **Aider** | `post-commit` hook (auto-push on commit) |
-| **OpenCode** | `/artifactbay` command |
+| Agent | Preferred | Fallback |
+|:---|:---|:---|
+| **Claude Code** | MCP server | Skill `/artifactbay-push` (+ optional Stop hook) |
+| **Codex CLI** | MCP server | `AGENTS.md` instruction → `artifactbay push` |
+| **Cursor** | MCP server | `.cursor/rules` + VS Code task |
+| **OpenCode** | MCP server | `/artifactbay` command |
+| **Aider** | — | `post-commit` hook (auto-push on commit) |
+
+### Conversation slices, not conversation archives
+
+`push_artifact` accepts a `conversation` array: the few turns that produced the artifact.
+It is stored as **owner-only** provenance — excluded from every capability link, public
+view, export and search index — trimmed server-side (512 KB / 200 messages, newest kept),
+and redacted before upload.
+
+Storing *every* conversation from *every* agent is a deliberate non-goal. It has different
+scale, retention and privacy needs than artifacts, and the content-addressed blob layer is
+built for whole documents rather than append-only logs — an untrimmed transcript re-pushed
+N times would store N ever-larger copies.
 
 ---
+
+## 📡 API Reference (v0)
+
+Interactive docs at `/docs`. Auth is either a `Bearer ab_...` API key (agents) or the
+session cookie (web UI). `?t=<token>` is a capability token.
+
+| Method | Path | Notes |
+|:---|:---|:---|
+| `GET` | `/v0/meta` | limits + `capabilities` list, so clients can detect an upgraded instance |
+| `POST` | `/v0/sessions` | create; honours `Idempotency-Key` |
+| `GET` | `/v0/sessions` | list/search — `q`, `agent`, `tag`, `project_id`, `favorite`, `limit`, `offset` |
+| `GET` | `/v0/sessions/{id}` | detail (`?version=`, `?t=`) |
+| `PATCH` `DELETE` | `/v0/sessions/{id}` | edit in place / delete with blob GC |
+| `POST` | `/v0/sessions/{id}/versions` | snapshot a new version |
+| `POST` | `/v0/sessions/{id}/artifacts` | **append to the current version** — no full re-upload |
+| `GET` | `/v0/sessions/{id}/versions` | version history with timestamps, counts and sizes |
+| `GET` | `/v0/sessions/{id}/export` | download a version as a zip + manifest |
+| `POST` `DELETE` | `/v0/sessions/{id}/share` | mint/rotate/revoke a session link |
+| `GET` | `/v0/artifacts/{id}` `…/meta` `…/view` | raw bytes / metadata / sandboxed render |
+| `POST` `DELETE` | `/v0/artifacts/{id}/share` | **per-artifact** capability link |
+| `DELETE` | `/v0/artifacts/{id}` | remove one artifact, release its blob |
+| `GET` | `/v0/projects` `/v0/tags` | the vocabularies the list filters use |
+| `GET` `POST` | `/v0/collections` | saved queries + manual pins |
+| `PATCH` `DELETE` | `/v0/collections/{id}` | rename / edit query / delete |
+| `GET` | `/v0/preview/s/{id}` `/v0/preview/a/{id}` | Open Graph cards for link unfurling |
 
 ## 🧪 Running Integration Tests
 
@@ -196,8 +259,18 @@ To prevent untrusted JavaScript executed inside agent-generated artifacts from h
 To let people view a private session without giving them an account:
 - `POST /v0/sessions/{id}/share` mints an unguessable token (`secrets.token_urlsafe(32)`) stored on the session; the share URL is `/s/{id}?t=<token>`.
 - The token grants anonymous **read** of that one session (all versions + artifacts), independent of `visibility`. It never appears in list queries, so link-shared sessions stay unlisted.
+- `POST /v0/artifacts/{id}/share` does the same for a **single artifact**, so "look at this dashboard" doesn't require exposing the whole session. An artifact token unlocks exactly that artifact — not its session, not its siblings.
 - Token checks use a constant-time compare and return `404` (not `403`) on mismatch, so existence isn't leaked. Read endpoints serve artifacts with `Referrer-Policy: no-referrer` to keep the token out of outbound referrers.
-- `DELETE /v0/sessions/{id}/share` (or `POST …/share?rotate=1`) revokes/rolls the link immediately.
+- `DELETE …/share` (or `POST …/share?rotate=1`) revokes/rolls the link immediately.
+
+### 4. Ownership and Owner-Only Artifacts
+- Sessions carry an `owner_id`. A member's API key can only read, mutate or list its own sessions; admins see everything. (Rows written before ownership existed stay readable by any authenticated principal, so upgrades don't hide anyone's history from them.)
+- Artifacts can be marked `owner_only`. Conversation slices default to it, and such artifacts are withheld from anonymous readers *however the session was reached* — share link, public visibility, export, version listing or direct id. Their bodies are also kept out of the shared search document, since `ts_headline` would otherwise quote fragments back to anonymous searchers.
+
+### 5. Trustworthy Links Behind a Proxy
+Outbound URLs are derived per request from `X-Forwarded-Proto`/`X-Forwarded-Host` (set by the bundled nginx), falling back to `ARTIFACTBAY_BASE_URL`. One instance reached over several hostnames mints links that work for the client that asked. Set `ARTIFACTBAY_TRUST_FORWARDED_HOST=false` if the app is exposed directly to the internet, where clients can forge those headers.
+
+Link-preview crawlers (Slack, Discord, iMessage, …) can't run JavaScript, so nginx routes them to a server-rendered Open Graph card while humans get the SPA. A crawler without a valid token gets a generic card that reveals nothing about a private session.
 
 ---
 

@@ -18,6 +18,15 @@ class ArtifactIn(BaseModel):
     encoding: str = "utf8"  # "utf8" | "base64"
     content: str
     allow_scripts: bool = False
+    # None = use the default for the type: conversation slices are owner-only,
+    # everything else follows the session. Set explicitly to override.
+    owner_only: bool | None = None
+
+
+class ArtifactsIn(BaseModel):
+    """Append artifacts to a session's current version (no new snapshot)."""
+
+    artifacts: list[ArtifactIn] = Field(default_factory=list)
 
 
 class SessionIn(BaseModel):
@@ -63,6 +72,9 @@ class ArtifactOut(BaseModel):
     size_bytes: int
     allow_scripts: bool
     url: str
+    owner_only: bool = False
+    # Per-artifact capability link; only ever populated for the owner.
+    share_url: str | None = None
 
 
 class ArtifactDetailOut(ArtifactOut):
@@ -70,6 +82,31 @@ class ArtifactDetailOut(ArtifactOut):
     session_id: str
     session_name: str
     version: int
+
+
+class VersionOut(BaseModel):
+    """One snapshot in a session's history."""
+
+    version: int
+    artifact_count: int
+    total_bytes: int
+    created_at: str
+
+
+class VersionListOut(BaseModel):
+    versions: list[VersionOut]
+    current: int
+
+
+class ProjectOut(BaseModel):
+    id: str
+    name: str
+    session_count: int
+
+
+class TagOut(BaseModel):
+    tag: str
+    session_count: int
 
 
 class SessionSummary(BaseModel):
@@ -110,6 +147,9 @@ class SessionOut(BaseModel):
     created_at: str
     updated_at: str
     share_url: str | None = None  # capability link; only present for authenticated owners
+    # Whether the caller owns this session. Drives owner-only UI (share, delete)
+    # instead of the client guessing from "is anyone logged in".
+    is_owner: bool = False
     artifacts: list[ArtifactOut]
 
 

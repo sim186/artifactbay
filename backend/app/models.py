@@ -78,8 +78,15 @@ class Session(SQLModel, table=True):
     git_branch: str | None = None
     git_commit: str | None = None
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # Denormalized "|tag|tag|" mirror of `tags`, so tag filtering is a SQL LIKE
+    # instead of a full table scan in Python. Delimiters make it exact-match safe
+    # ("|api|" never matches "|apidocs|"). Maintained by store.set_tags().
+    tags_text: str = Field(default="", index=True)
     favorite: bool = False
     visibility: Visibility = Field(default=Visibility.private)
+    # Who pushed this. None = pre-ownership row; those stay readable by any
+    # authenticated principal so existing single-user installs don't go dark.
+    owner_id: str | None = Field(default=None, foreign_key="user.id", index=True)
     # Capability link: unguessable token grants anon read of this one session
     # (all versions + artifacts), independent of visibility. None = not shared.
     share_token: str | None = Field(default=None, index=True)
@@ -101,6 +108,14 @@ class Artifact(SQLModel, table=True):
     content_hash: str = Field(foreign_key="blob.sha256")
     size_bytes: int
     allow_scripts: bool = False
+    # Owner-only artifacts are withheld from anonymous readers even when the
+    # session itself is public or reached via a capability link. Conversation
+    # transcripts default to this: they are provenance for the owner, not
+    # something a share link should hand to a stranger.
+    owner_only: bool = False
+    # Per-artifact capability link, independent of the session's. Lets you share
+    # one dashboard without exposing the rest of the session.
+    share_token: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=_now)
 
 

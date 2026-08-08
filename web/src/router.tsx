@@ -44,6 +44,11 @@ const artifactRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/a/$artifactId',
   component: ArtifactPage,
+  // `t` = per-artifact capability token, so a single artifact can be shared on
+  // its own without handing over the whole session.
+  validateSearch: (s: Record<string, unknown>): { t?: string } => ({
+    t: typeof s.t === 'string' ? s.t : undefined,
+  }),
 })
 
 const settingsRoute = createRoute({

@@ -60,10 +60,15 @@ def make_jwt(user: User) -> str:
 @dataclass
 class Principal:
     kind: str  # "user" | "apikey"
-    id: str
+    id: str  # user id, or the API-key row id
     role: Role | None = None
     scope: Scope | None = None
     username: str | None = None
+    # The human behind the request. For a cookie session that's the user; for an
+    # API key it's the user the key was minted for. Ownership is always checked
+    # against this, never against `id` — otherwise every key would be its own
+    # tenant and could never read back what its owner pushed from the UI.
+    user_id: str | None = None
 
     @property
     def can_write(self) -> bool:
@@ -83,7 +88,8 @@ def _user_from_cookie(request: Request, db: DBSession) -> Principal | None:
     user = db.get(User, payload.get("sub"))
     if user is None:
         return None
-    return Principal(kind="user", id=user.id, role=user.role, username=user.username)
+    return Principal(kind="user", id=user.id, role=user.role, username=user.username,
+                     user_id=user.id)
 
 
 def _principal_from_apikey(request: Request, db: DBSession) -> Principal | None:
@@ -97,19 +103,61 @@ def _principal_from_apikey(request: Request, db: DBSession) -> Principal | None:
     row.last_used_at = datetime.now(timezone.utc)
     db.add(row)
     db.commit()
-    return Principal(kind="apikey", id=row.id, scope=row.scope, role=None)
+    # An API key inherits the role of the user it belongs to, so an admin's key
+    # can administer and a member's key cannot.
+    owner = db.get(User, row.user_id) if row.user_id else None
+    return Principal(kind="apikey", id=row.id, scope=row.scope,
+                     role=owner.role if owner else None, user_id=row.user_id)
+
+
+def session_owned_by(sess: Session, principal: Principal | None) -> bool:
+    """True if this principal owns the session (or is an admin, or the session
+    predates ownership and so belongs to everyone authenticated)."""
+    if principal is None:
+        return False
+    if principal.role == Role.admin:
+        return True
+    if sess.owner_id is None:
+        # Rows written before ownership existed. Treating them as unowned keeps
+        # single-user installs working across the upgrade instead of hiding
+        # every existing session from its own creator.
+        return True
+    return principal.user_id is not None and principal.user_id == sess.owner_id
 
 
 def session_readable(sess: Session, principal: Principal | None, token: str | None) -> bool:
-    """Whether a reader may see this session: any authenticated principal, a public
-    session for anyone, or anyone holding the session's capability link token."""
-    if principal is not None:
+    """Whether a reader may see this session at all.
+
+    Owner (or admin) always; anyone for a public session; anyone holding the
+    session's capability token. Note this is coarse — it says nothing about
+    *which* artifacts come back. Owner-only artifacts (transcripts) are filtered
+    separately, so a share link never hands a stranger the conversation.
+    """
+    if session_owned_by(sess, principal):
         return True
     if sess.visibility == Visibility.public:
         return True
     if token and sess.share_token and secrets.compare_digest(token, sess.share_token):
         return True
     return False
+
+
+def artifact_readable(art, sess: Session | None, principal: Principal | None,
+                      token: str | None) -> bool:
+    """Whether a reader may see one specific artifact.
+
+    Beyond session readability there are two extra rules:
+    - an artifact's own capability token unlocks just that artifact, and
+    - `owner_only` artifacts (conversation slices) are withheld from everyone
+      except the owner, however the session itself was reached.
+    """
+    if token and art.share_token and secrets.compare_digest(token, art.share_token):
+        return True
+    if sess is not None and not session_readable(sess, principal, token):
+        return False
+    if art.owner_only:
+        return sess is not None and session_owned_by(sess, principal)
+    return True
 
 
 def optional_principal(request: Request, db: DBSession = Depends(get_session)) -> Principal | None:

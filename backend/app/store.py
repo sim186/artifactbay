@@ -108,6 +108,22 @@ def store_blob(db: DBSession, data: bytes) -> str:
     return digest
 
 
+def tags_to_text(tags: list[str] | None) -> str:
+    """Render tags as `|a|b|` so SQL `LIKE '%|a|%'` is an exact tag match.
+
+    Without the delimiters `%api%` would also match the tag `apidocs`; with them
+    the filter runs in the database instead of scanning every row in Python.
+    """
+    clean = [t.strip() for t in (tags or []) if t and t.strip()]
+    return "|" + "|".join(clean) + "|" if clean else ""
+
+
+def set_tags(sess: Session, tags: list[str] | None) -> None:
+    """Set a session's tags and keep the searchable mirror in step."""
+    sess.tags = list(tags or [])
+    sess.tags_text = tags_to_text(sess.tags)
+
+
 def upsert_project(db: DBSession, name: str | None) -> str | None:
     if not name:
         return None
@@ -119,6 +135,65 @@ def upsert_project(db: DBSession, name: str | None) -> str | None:
     return proj.id
 
 
+def trim_conversation(data: bytes) -> bytes:
+    """Clamp a conversation slice to the newest messages within the size budget.
+
+    A transcript is provenance for one artifact, not an archive, and it is the one
+    artifact type that grows without bound while a session runs. Since blobs are
+    content-addressed on the *whole* body, an untrimmed transcript re-pushed N times
+    stores N ever-larger copies. Keeping the tail bounded keeps that linear and small.
+
+    Non-JSON or unparseable bodies fall back to a byte-level tail cut.
+    """
+    if len(data) <= settings.max_conversation_bytes:
+        try:
+            msgs = json.loads(data.decode("utf-8", errors="replace"))
+        except Exception:  # noqa: BLE001
+            return data
+        if not isinstance(msgs, list) or len(msgs) <= settings.max_conversation_messages:
+            return data
+
+    try:
+        msgs = json.loads(data.decode("utf-8", errors="replace"))
+        if not isinstance(msgs, list):
+            raise ValueError("not a message list")
+    except Exception:  # noqa: BLE001
+        return data[-settings.max_conversation_bytes:]
+
+    msgs = msgs[-settings.max_conversation_messages:]
+    out = json.dumps(msgs).encode()
+    # Still too big (a few enormous messages) — drop from the front until it fits.
+    while len(out) > settings.max_conversation_bytes and len(msgs) > 1:
+        msgs = msgs[len(msgs) // 2:]
+        out = json.dumps(msgs).encode()
+    return out[:settings.max_conversation_bytes] if len(out) > settings.max_conversation_bytes else out
+
+
+def _build_artifact(db: DBSession, session_id: str, version: int, a: ArtifactIn) -> tuple[Artifact, str]:
+    """Decode, store, and index a single artifact. Returns (row, extracted_text)."""
+    data = decode_artifact(a)
+    is_conversation = a.type.value == "conversation"
+    if is_conversation:
+        data = trim_conversation(data)
+    if len(data) > settings.max_artifact_bytes:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"{a.name} exceeds size limit")
+    digest = store_blob(db, data)
+    row = Artifact(
+        session_id=session_id,
+        version=version,
+        name=a.name,
+        type=a.type,
+        content_hash=digest,
+        size_bytes=len(data),
+        allow_scripts=a.allow_scripts and a.type.value == "html",
+        # Transcripts are owner-only unless explicitly opted out: they are the one
+        # artifact type likely to contain things nobody meant to publish.
+        owner_only=a.owner_only if a.owner_only is not None else is_conversation,
+    )
+    db.add(row)
+    return row, extract_text(a.type.value, data)
+
+
 def write_artifacts(
     db: DBSession, session_id: str, version: int, payload: SessionIn
 ) -> tuple[list[Artifact], list[tuple[str, str]]]:
@@ -128,23 +203,44 @@ def write_artifacts(
     rows: list[Artifact] = []
     texts: list[tuple[str, str]] = []
     for a in payload.artifacts:
-        data = decode_artifact(a)
-        if len(data) > settings.max_artifact_bytes:
-            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"{a.name} exceeds size limit")
-        digest = store_blob(db, data)
-        row = Artifact(
-            session_id=session_id,
-            version=version,
-            name=a.name,
-            type=a.type,
-            content_hash=digest,
-            size_bytes=len(data),
-            allow_scripts=a.allow_scripts and a.type.value == "html",
-        )
-        db.add(row)
+        row, text = _build_artifact(db, session_id, version, a)
         rows.append(row)
-        texts.append((a.name, extract_text(a.type.value, data)))
+        texts.append((a.name, text))
     return rows, texts
+
+
+def add_artifacts(
+    db: DBSession, sess: Session, artifacts: list[ArtifactIn]
+) -> list[Artifact]:
+    """Append artifacts to a session's CURRENT version, without snapshotting a new one.
+
+    This is the incremental write path: adding one file no longer means re-sending
+    the whole session. Callers must recompute search text afterwards.
+    """
+    existing = len(db.exec(
+        select(Artifact).where(Artifact.session_id == sess.id, Artifact.version == sess.version)
+    ).all())
+    if existing + len(artifacts) > settings.max_artifacts:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "too many artifacts")
+    return [_build_artifact(db, sess.id, sess.version, a)[0] for a in artifacts]
+
+
+def release_blob(db: DBSession, content_hash: str) -> None:
+    """Drop one reference to a blob, deleting it when nothing points at it."""
+    blob = db.get(Blob, content_hash)
+    if blob is None:
+        return
+    blob.ref_count -= 1
+    if blob.ref_count <= 0:
+        db.delete(blob)
+    else:
+        db.add(blob)
+
+
+def delete_artifact(db: DBSession, art: Artifact) -> None:
+    """Delete one artifact row and release its blob reference."""
+    release_blob(db, art.content_hash)
+    db.delete(art)
 
 
 def recompute_search_text(db: DBSession, sess: Session) -> None:
@@ -154,6 +250,14 @@ def recompute_search_text(db: DBSession, sess: Session) -> None:
     ).all()
     pairs: list[tuple[str, str]] = []
     for a in rows:
+        # Owner-only bodies (transcripts) stay out of the shared search document:
+        # it is one column, served to anonymous readers of public sessions, and
+        # ts_headline would happily quote a fragment of it back at them.
+        # Their *names* still index, so the owner can find "the session with the
+        # transcript" without the contents being searchable by strangers.
+        if a.owner_only:
+            pairs.append((a.name, ""))
+            continue
         blob = db.get(Blob, a.content_hash)
         text = extract_text(a.type.value, blob.data) if blob else ""
         pairs.append((a.name, text))
@@ -177,14 +281,7 @@ def delete_session_and_cleanup_blobs(db: DBSession, session_id: str) -> None:
     # 1. Decrement ref counts of blobs linked to this session's artifacts
     artifacts = db.exec(select(Artifact).where(Artifact.session_id == session_id)).all()
     for art in artifacts:
-        blob = db.get(Blob, art.content_hash)
-        if blob:
-            blob.ref_count -= 1
-            if blob.ref_count <= 0:
-                db.delete(blob)
-            else:
-                db.add(blob)
-        db.delete(art)
+        delete_artifact(db, art)
 
     # 2. Delete associated idempotency records
     idem_records = db.exec(select(IdempotencyRecord).where(IdempotencyRecord.session_id == session_id)).all()

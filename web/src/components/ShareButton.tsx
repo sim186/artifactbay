@@ -2,19 +2,36 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 
-// Owner-only control to mint / copy / revoke a session's capability link.
+// Owner-only control to mint / copy / revoke a capability link.
 // `shareUrl` is the currently active link (null = not shared yet).
-export function ShareButton({ sessionId, shareUrl }: { sessionId: string; shareUrl: string | null }) {
+// `kind` picks the scope: a whole session, or one artifact — sharing a single
+// dashboard is the common ask, and it shouldn't require exposing the session.
+export function ShareButton({
+  sessionId,
+  shareUrl,
+  kind = 'session',
+}: {
+  sessionId: string
+  shareUrl: string | null
+  kind?: 'session' | 'artifact'
+}) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const isArtifact = kind === 'artifact'
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['session', sessionId] })
-  const share = useMutation({ mutationFn: () => api.shareSession(sessionId), onSuccess: invalidate })
-  const rotate = useMutation({ mutationFn: () => api.shareSession(sessionId, true), onSuccess: invalidate })
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['session'] })
+    qc.invalidateQueries({ queryKey: ['artifact'] })
+  }
+  const mint = (rotate: boolean) =>
+    isArtifact ? api.shareArtifact(sessionId, rotate) : api.shareSession(sessionId, rotate)
+  const share = useMutation({ mutationFn: () => mint(false), onSuccess: invalidate })
+  const rotate = useMutation({ mutationFn: () => mint(true), onSuccess: invalidate })
   const revoke = useMutation({
-    mutationFn: () => api.revokeShare(sessionId),
+    mutationFn: () =>
+      isArtifact ? api.revokeArtifactShare(sessionId) : api.revokeShare(sessionId),
     onSuccess: () => {
       setOpen(false)
       invalidate()
@@ -47,7 +64,11 @@ export function ShareButton({ sessionId, shareUrl }: { sessionId: string; shareU
             ? 'border-accent/40 bg-accent-soft text-text'
             : 'border-border text-text-dim hover:bg-surface-2 hover:text-text'
         }`}
-        title={shareUrl ? 'Shared — manage public link' : 'Share a public link to this session'}
+        title={
+          shareUrl
+            ? `Shared — manage this ${kind} link`
+            : `Share a public link to this ${kind}`
+        }
         aria-label="Share"
       >
         🔗
@@ -58,7 +79,8 @@ export function ShareButton({ sessionId, shareUrl }: { sessionId: string; shareU
           {shareUrl ? (
             <>
               <p className="mb-2 text-[11px] text-text-faint">
-                Anyone with this link can view this session — no login required.
+                Anyone with this link can view this {kind} — no login required.
+                {!isArtifact && ' Conversation transcripts stay private.'}
               </p>
               <div className="flex items-center gap-1.5">
                 <input
@@ -95,7 +117,8 @@ export function ShareButton({ sessionId, shareUrl }: { sessionId: string; shareU
           ) : (
             <>
               <p className="mb-2 text-[11px] text-text-faint">
-                Create a secret link so anyone can view this session without an account.
+                Create a secret link so anyone can view this {kind} without an account.
+                {!isArtifact && ' Conversation transcripts are never included.'}
               </p>
               <button
                 onClick={() => share.mutate()}

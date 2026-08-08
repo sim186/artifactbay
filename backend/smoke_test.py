@@ -2,20 +2,24 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
+import zipfile
 
 os.environ.setdefault("ARTIFACTBAY_DATABASE_URL", "sqlite:///./smoke.db")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from sqlmodel import Session as DBSession  # noqa: E402
 from sqlmodel import SQLModel  # noqa: E402
 
 from app import models as _models  # noqa: E402,F401  (populate metadata)
-from app.auth import bootstrap_auth  # noqa: E402
+from app.auth import bootstrap_auth, hash_password, hash_token, new_api_token  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models import ApiKey, Role, Scope, User  # noqa: E402
 
 # Clean slate so the test is isolated on a persistent DB (Postgres volume).
 SQLModel.metadata.drop_all(engine)
@@ -312,6 +316,196 @@ def main() -> None:
     assert r.json()["total"] == 2
     
     client.delete(f"/v0/collections/{pag_cid}")
+
+    # ── collection PATCH ──────────────────────────────────────────────────
+    r = client.post("/v0/collections", json={"name": "Old name", "query": {"tag": "a"}})
+    patch_cid = r.json()["id"]
+    r = client.patch(f"/v0/collections/{patch_cid}", json={"name": "New name"})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "New name"
+    assert r.json()["query"] == {"tag": "a"}, "omitted fields must be left alone"
+    r = client.patch(f"/v0/collections/{patch_cid}", json={"query": {"tag": "b"}})
+    assert r.json()["query"] == {"tag": "b"} and r.json()["name"] == "New name"
+    client.delete(f"/v0/collections/{patch_cid}")
+
+    # ── conversation slices are owner-only provenance ─────────────────────
+    # A transcript rides along with the artifact it explains, but a capability
+    # link must never hand it to whoever receives the link.
+    body = {
+        "name": "With transcript", "agent": "claude-code", "tags": ["provenance"],
+        "artifacts": [
+            {"name": "report.html", "type": "html", "content": "<h1>Ledger report</h1>"},
+            {"name": "conversation.json", "type": "conversation",
+             "content": json.dumps([{"role": "user", "content": "build the ledger report"}])},
+        ],
+    }
+    conv_sid = client.post("/v0/sessions", json=body, headers=H).json()["id"]
+    detail = client.get(f"/v0/sessions/{conv_sid}").json()
+    assert detail["is_owner"] is True
+    names = {a["name"]: a for a in detail["artifacts"]}
+    assert names["conversation.json"]["owner_only"] is True
+    assert names["report.html"]["owner_only"] is False
+    conv_aid = names["conversation.json"]["id"]
+    html_aid = names["report.html"]["id"]
+
+    share_token = client.post(f"/v0/sessions/{conv_sid}/share").json()["url"].split("t=")[1]
+    shared = anon.get(f"/v0/sessions/{conv_sid}?t={share_token}").json()
+    assert [a["name"] for a in shared["artifacts"]] == ["report.html"], shared["artifacts"]
+    assert shared["is_owner"] is False
+    assert shared["share_url"] is None, "anon must never be shown the secret link"
+    # The transcript is unreachable even by direct id with a valid session token.
+    assert anon.get(f"/v0/artifacts/{conv_aid}?t={share_token}").status_code == 404
+    assert anon.get(f"/v0/artifacts/{conv_aid}/meta?t={share_token}").status_code == 404
+    # …but the artifact the link was meant to share works fine.
+    assert anon.get(f"/v0/artifacts/{html_aid}?t={share_token}").status_code == 200
+    # Transcript contents stay out of the shared search document.
+    assert "build the ledger report" not in client.get(f"/v0/sessions/{conv_sid}").text
+
+    # ── per-artifact capability links ─────────────────────────────────────
+    art_token = client.post(f"/v0/artifacts/{html_aid}/share").json()["url"].split("t=")[1]
+    assert anon.get(f"/v0/artifacts/{html_aid}?t={art_token}").status_code == 200
+    # An artifact token unlocks exactly one artifact — not its session, not its siblings.
+    assert anon.get(f"/v0/sessions/{conv_sid}?t={art_token}").status_code == 404
+    assert anon.get(f"/v0/artifacts/{conv_aid}?t={art_token}").status_code == 404
+    assert client.delete(f"/v0/artifacts/{html_aid}/share").status_code == 204
+    assert anon.get(f"/v0/artifacts/{html_aid}?t={art_token}").status_code == 404
+
+    # ── version history ───────────────────────────────────────────────────
+    r = client.get(f"/v0/sessions/{conv_sid}/versions")
+    assert r.status_code == 200, r.text
+    hist = r.json()
+    assert hist["current"] == 1 and len(hist["versions"]) == 1
+    assert hist["versions"][0]["artifact_count"] == 2
+    assert hist["versions"][0]["total_bytes"] > 0 and hist["versions"][0]["created_at"]
+    # Anonymous readers don't get the owner-only artifact counted for them.
+    anon_hist = anon.get(f"/v0/sessions/{conv_sid}/versions?t={share_token}").json()
+    assert anon_hist["versions"][0]["artifact_count"] == 1
+
+    # ── incremental artifact append (no new version) ──────────────────────
+    r = client.post(f"/v0/sessions/{conv_sid}/artifacts", json={
+        "artifacts": [{"name": "addendum.md", "type": "markdown", "content": "# Addendum"}],
+    }, headers=H)
+    assert r.status_code == 201, r.text
+    assert r.json()["version"] == 1, "appending must not snapshot a new version"
+    detail = client.get(f"/v0/sessions/{conv_sid}").json()
+    assert len(detail["artifacts"]) == 3
+    # New content is searchable straight away.
+    assert any(s["id"] == conv_sid for s in client.get("/v0/sessions?q=Addendum").json()["sessions"])
+
+    # ── artifact delete releases its blob ─────────────────────────────────
+    add_aid = [a["id"] for a in detail["artifacts"] if a["name"] == "addendum.md"][0]
+    assert client.delete(f"/v0/artifacts/{add_aid}").status_code == 204
+    assert client.get(f"/v0/artifacts/{add_aid}/meta").status_code == 404
+    assert len(client.get(f"/v0/sessions/{conv_sid}").json()["artifacts"]) == 2
+
+    # ── export ────────────────────────────────────────────────────────────
+    r = client.get(f"/v0/sessions/{conv_sid}/export")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        entries = zf.namelist()
+        assert "manifest.json" in entries
+        assert "artifacts/report.html" in entries
+        assert "artifacts/conversation.json" in entries, "owner export includes provenance"
+        assert json.loads(zf.read("manifest.json"))["id"] == conv_sid
+    # An anonymous export over a share link must not smuggle the transcript out.
+    r = anon.get(f"/v0/sessions/{conv_sid}/export?t={share_token}")
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        assert "artifacts/conversation.json" not in zf.namelist()
+
+    # ── catalog ───────────────────────────────────────────────────────────
+    projects = client.get("/v0/projects").json()
+    assert any(p["name"] == "Inspector" and p["session_count"] >= 1 for p in projects), projects
+    tags = {t["tag"]: t["session_count"] for t in client.get("/v0/tags").json()}
+    assert tags.get("provenance", 0) >= 1, tags
+    # Tag filtering is exact — a delimited match, not a substring one.
+    client.post("/v0/sessions", json={"name": "tagpfx", "agent": "codex", "tags": ["apidocs"]},
+                headers=H)
+    exact = client.get("/v0/sessions?tag=api").json()
+    assert all("apidocs" not in s["tags"] or "api" in s["tags"] for s in exact["sessions"])
+    assert not any(s["name"] == "tagpfx" for s in exact["sessions"]), "tag=api matched 'apidocs'"
+
+    # ── pagination totals come from SQL, not a sliced Python list ─────────
+    page = client.get("/v0/sessions?limit=2").json()
+    assert len(page["sessions"]) == 2
+    assert page["total"] > 2, "total must count all matches, not just the page"
+    page2 = client.get("/v0/sessions?limit=2&offset=2").json()
+    assert page2["total"] == page["total"]
+    assert {s["id"] for s in page["sessions"]}.isdisjoint({s["id"] for s in page2["sessions"]})
+
+    # ── links follow the forwarded host, not the configured base_url ──────
+    fwd = {**H, "X-Forwarded-Host": "artifacts.example.com", "X-Forwarded-Proto": "https"}
+    r = client.post(f"/v0/sessions/{conv_sid}/share", headers=fwd)
+    assert r.json()["url"].startswith("https://artifacts.example.com/s/"), r.json()
+    r = client.get(f"/v0/sessions/{conv_sid}", headers=fwd)
+    assert r.json()["artifacts"][0]["url"].startswith("https://artifacts.example.com/"), r.json()
+
+    # ── link previews ─────────────────────────────────────────────────────
+    # Reissue: the share POST above rotated nothing, but re-read the current token.
+    share_token = client.get(f"/v0/sessions/{conv_sid}").json()["share_url"].split("t=")[1]
+    r = anon.get(f"/v0/preview/s/{conv_sid}?t={share_token}")
+    assert r.status_code == 200 and "og:title" in r.text
+    assert "With transcript" in r.text
+    # Without the token nothing about the private session leaks into the card.
+    r = anon.get(f"/v0/preview/s/{conv_sid}")
+    assert r.status_code == 200 and "With transcript" not in r.text
+
+    # ── ownership isolation between users ─────────────────────────────────
+    # A second user's key must not be able to read or mutate the first user's
+    # private sessions. Before ownership existed, any authenticated principal
+    # could read every session in the database.
+    with DBSession(engine) as db:
+        other = User(username="other", password_hash=hash_password("pw"), role=Role.member)
+        db.add(other)
+        db.commit()
+        db.refresh(other)
+        other_token = new_api_token()
+        db.add(ApiKey(key_hash=hash_token(other_token), prefix=other_token[:8],
+                      label="other", scope=Scope.write, user_id=other.id))
+        db.commit()
+    OH = {"Authorization": f"Bearer {other_token}"}
+    other_client = TestClient(app, headers=OH)
+
+    owned = other_client.post("/v0/sessions", json={
+        "name": "other user's session", "agent": "codex",
+        "artifacts": [{"name": "x.md", "type": "markdown", "content": "private to other"}],
+    }, headers=OH).json()["id"]
+
+    # The original (admin) key can still see everything — admins are not fenced out.
+    assert client.get(f"/v0/sessions/{owned}").status_code == 200
+    # But a member's key cannot touch a session it doesn't own.
+    assert other_client.get(f"/v0/sessions/{conv_sid}").status_code == 404
+    assert other_client.delete(f"/v0/sessions/{conv_sid}").status_code == 404
+    assert other_client.patch(f"/v0/sessions/{conv_sid}", json={"favorite": True}).status_code == 404
+    assert other_client.post(f"/v0/sessions/{conv_sid}/share").status_code == 404
+    # …nor see it in a listing.
+    assert not any(s["id"] == conv_sid
+                   for s in other_client.get("/v0/sessions?limit=200").json()["sessions"])
+    # …and its own session is readable by itself.
+    assert other_client.get(f"/v0/sessions/{owned}").json()["is_owner"] is True
+
+    # ── conversation slices are trimmed, not archived ─────────────────────
+    long_convo = [{"role": "user", "content": f"message {i}"} for i in range(5000)]
+    big_sid = client.post("/v0/sessions", json={
+        "name": "long transcript", "agent": "claude-code",
+        "artifacts": [{"name": "conversation.json", "type": "conversation",
+                       "content": json.dumps(long_convo)}],
+    }, headers=H).json()["id"]
+    stored = client.get(f"/v0/sessions/{big_sid}").json()["artifacts"][0]
+    assert stored["size_bytes"] <= settings.max_conversation_bytes, stored
+    kept = json.loads(client.get(f"/v0/artifacts/{stored['id']}").text)
+    assert len(kept) <= settings.max_conversation_messages
+    assert kept[-1]["content"] == "message 4999", "trimming keeps the most recent turns"
+
+    # ── FTS highlight snippets (Postgres only) ────────────────────────────
+    # The headline is selected alongside the row rather than fetched per result;
+    # SQLModel's exec() unwraps single-entity selects to scalars, which silently
+    # drops that extra column, so assert the snippet actually survives.
+    if settings.database_url.startswith("postgresql"):
+        hits = [s for s in client.get("/v0/sessions?q=Ledger").json()["sessions"]
+                if s["id"] == conv_sid]
+        assert hits, "expected the ledger session in FTS results"
+        assert hits[0]["snippet"] and "@@HLS@@" in hits[0]["snippet"], hits[0]
 
     print("ALL SMOKE TESTS PASSED ✅")
 

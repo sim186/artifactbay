@@ -17,6 +17,10 @@ export interface ArtifactOut {
   size_bytes: number
   allow_scripts: boolean
   url: string
+  // Withheld from anonymous readers even on a shared session (transcripts).
+  owner_only?: boolean
+  // Per-artifact capability link; only ever sent to the owner.
+  share_url?: string | null
 }
 
 export interface SessionOut {
@@ -36,7 +40,33 @@ export interface SessionOut {
   created_at: string
   updated_at: string
   share_url: string | null // capability link; present only for authenticated owners
+  // Whether the caller owns this session. Owner-only controls key off this
+  // rather than "is anyone logged in", which was wrong for shared sessions.
+  is_owner: boolean
   artifacts: ArtifactOut[]
+}
+
+export interface VersionInfo {
+  version: number
+  artifact_count: number
+  total_bytes: number
+  created_at: string
+}
+
+export interface VersionList {
+  versions: VersionInfo[]
+  current: number
+}
+
+export interface ProjectInfo {
+  id: string
+  name: string
+  session_count: number
+}
+
+export interface TagInfo {
+  tag: string
+  session_count: number
 }
 
 export interface ArtifactIn {
@@ -134,6 +164,10 @@ export interface ListParams {
   agent?: string
   favorite?: boolean
   q?: string
+  tag?: string
+  project_id?: string
+  limit?: number
+  offset?: number
 }
 
 function qs(params: ListParams): string {
@@ -141,6 +175,10 @@ function qs(params: ListParams): string {
   if (params.agent) p.set('agent', params.agent)
   if (params.favorite != null) p.set('favorite', String(params.favorite))
   if (params.q) p.set('q', params.q)
+  if (params.tag) p.set('tag', params.tag)
+  if (params.project_id) p.set('project_id', params.project_id)
+  if (params.limit != null) p.set('limit', String(params.limit))
+  if (params.offset != null) p.set('offset', String(params.offset))
   const s = p.toString()
   return s ? `?${s}` : ''
 }
@@ -197,11 +235,28 @@ export const api = {
   // Raw + sandboxed-view URLs are plain paths (used as <a>/<iframe> src).
   artifactRaw: (id: string, t?: string) => `/v0/artifacts/${id}${viewQs(undefined, t)}`,
   artifactView: (id: string, t?: string) => `/v0/artifacts/${id}/view${viewQs(undefined, t)}`,
+  deleteArtifact: (id: string) => req<void>('DELETE', `/v0/artifacts/${id}`),
 
-  // capability link (viewer-only sharing)
+  // real version history (timestamps + sizes), not a count guessed from `version`
+  versions: (id: string, t?: string) =>
+    get<VersionList>(`/v0/sessions/${id}/versions${viewQs(undefined, t)}`),
+  // incremental write: add files to the current version without resending the session
+  addArtifacts: (id: string, artifacts: ArtifactIn[]) =>
+    req<CreateSessionOut>('POST', `/v0/sessions/${id}/artifacts`, { artifacts }),
+  exportUrl: (id: string, version?: number, t?: string) =>
+    `/v0/sessions/${id}/export${viewQs(version, t)}`,
+
+  // catalog — the vocabularies the filters are built from
+  projects: () => get<ProjectInfo[]>('/v0/projects'),
+  tags: () => get<TagInfo[]>('/v0/tags'),
+
+  // capability links (viewer-only sharing), session- or artifact-scoped
   shareSession: (id: string, rotate = false) =>
     req<ShareLink>('POST', `/v0/sessions/${id}/share${rotate ? '?rotate=true' : ''}`, {}),
   revokeShare: (id: string) => req<void>('DELETE', `/v0/sessions/${id}/share`),
+  shareArtifact: (id: string, rotate = false) =>
+    req<ShareLink>('POST', `/v0/artifacts/${id}/share${rotate ? '?rotate=true' : ''}`, {}),
+  revokeArtifactShare: (id: string) => req<void>('DELETE', `/v0/artifacts/${id}/share`),
 
   // auth
   me: () => get<User>('/v0/auth/me'),
@@ -219,6 +274,8 @@ export const api = {
   collectionSessions: (id: string) => get<SessionList>(`/v0/collections/${id}/sessions`),
   createCollection: (name: string, query: ListParams) =>
     req<Collection>('POST', '/v0/collections', { name, query }),
+  updateCollection: (id: string, patch: { name?: string; query?: ListParams }) =>
+    req<Collection>('PATCH', `/v0/collections/${id}`, patch),
   deleteCollection: (id: string) => req<void>('DELETE', `/v0/collections/${id}`),
   pinSession: (collectionId: string, sessionId: string) =>
     req<Collection>('PUT', `/v0/collections/${collectionId}/sessions/${sessionId}`),

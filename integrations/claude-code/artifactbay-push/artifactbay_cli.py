@@ -1,189 +1,113 @@
 #!/usr/bin/env python3
-"""ArtifactBay push CLI — the agent integration engine (FAIP v0, see docs/02).
+"""ArtifactBay push CLI (FAIP v0, see docs/02).
 
-Stdlib only: no pip install, drops into any agent's shell. Subcommands:
+Stdlib only: no pip install, drops into any agent's shell. The engine lives in
+`artifactbay_core.py` beside this file and is shared with the MCP server.
 
-  doctor                 check connectivity + auth + what would be pushed
-  push   [--name NAME]    package .artifactbay/artifacts + git context, POST to ArtifactBay
-         [--resume]       retry any queued pushes in .artifactbay/pending/
-         [--dry-run]      print the payload, don't send
+  init                    write machine-wide config (~/.config/artifactbay/config.json)
+  doctor                  check connectivity + auth + what would be pushed
+  push  [PATH ...]        push files/dirs directly, or the staged artifacts dir
+        [--name NAME]     session title
+        [--resume]        retry any queued pushes in .artifactbay/pending/
+        [--dry-run]       print the payload, don't send
+        [--no-redact]     skip client-side secret stripping (not recommended)
+  share SESSION_ID        mint a capability link for a session
+  ls    [-q QUERY]        list recent sessions
+  mcp                     run the MCP server on stdio (see artifactbay_mcp.py)
 
-Config (env):
-  ARTIFACTBAY_URL            default http://localhost:8080
-  ARTIFACTBAY_KEY            write API key (required to push)
-  ARTIFACTBAY_ARTIFACTS_DIR  default .artifactbay/artifacts
-  ARTIFACTBAY_PROJECT        optional project name
-
-Design: idempotent (Idempotency-Key), fail-open (never crash the agent),
-versions automatically (remembers .artifactbay/session_id).
+Config resolution: env vars → ./.artifactbay/config.json → ~/.config/artifactbay/config.json.
+Run `artifactbay init` once per machine and projects need no setup of their own.
 """
 from __future__ import annotations
 
 import argparse
-import base64
-import fnmatch
 import json
-import os
-import subprocess
 import sys
-import urllib.error
-import urllib.request
-import uuid
 from pathlib import Path
 
-EXT_TYPE = {
-    ".html": "html", ".htm": "html", ".md": "markdown", ".markdown": "markdown",
-    ".json": "json", ".svg": "svg", ".png": "png", ".pdf": "pdf",
-    ".zip": "zip", ".txt": "text", ".log": "text",
-}
-BINARY = {"png", "pdf", "zip"}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from artifactbay_core import (  # noqa: E402
+    USER_CONFIG,
+    ApiError,
+    Client,
+    collect_artifacts,
+    collect_paths,
+    load_config,
+    push,
+    send,
+    write_user_config,
+)
 
 C_OK, C_ERR, C_DIM, C_RST = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
 
 
-def cfg() -> dict:
-    return {
-        "url": os.environ.get("ARTIFACTBAY_URL", "http://localhost:8080").rstrip("/"),
-        "key": os.environ.get("ARTIFACTBAY_KEY", ""),
-        "artifacts_dir": Path(os.environ.get("ARTIFACTBAY_ARTIFACTS_DIR", ".artifactbay/artifacts")),
-        "project": os.environ.get("ARTIFACTBAY_PROJECT") or None,
-        "state_dir": Path(".artifactbay"),
-    }
+def cmd_init(args: argparse.Namespace) -> int:
+    """Write the machine-wide config once, so no project needs its own."""
+    url = args.url or input(f"ArtifactBay URL [{'http://localhost:8080'}]: ").strip() \
+        or "http://localhost:8080"
+    key = args.key or input("Write API key (ab_...): ").strip()
+    if not key:
+        print(f"{C_ERR}a write key is required{C_RST} — create one in Settings → API keys")
+        return 1
 
-
-def _req(method: str, url: str, key: str = "", body: bytes | None = None,
-         idem: str | None = None, timeout: int = 15):
-    headers = {"Accept": "application/json"}
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-    if idem:
-        headers["Idempotency-Key"] = idem
-    r = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(r, timeout=timeout) as resp:
-        return resp.status, json.loads(resp.read() or b"{}")
-
-
-def git(*args: str) -> str | None:
+    cfg = load_config({"url": url, "key": key})
     try:
-        out = subprocess.run(["git", *args], capture_output=True, text=True, timeout=5)
-        return out.stdout.strip() or None if out.returncode == 0 else None
-    except Exception:
-        return None
-
-
-def git_context() -> dict:
-    return {
-        "repository": git("config", "--get", "remote.origin.url"),
-        "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
-        "commit": git("rev-parse", "HEAD"),
-    }
-
-
-def collect_artifacts(d: Path) -> list[dict]:
-    arts: list[dict] = []
-    if not d.is_dir():
-        return arts
-    # Opt-in: HTML files matching any glob in ARTIFACTBAY_ALLOW_SCRIPTS get allow_scripts=true
-    # (needed for interactive artifacts like slide decks). Default: scripts disabled.
-    allow_globs = [g.strip() for g in os.environ.get("ARTIFACTBAY_ALLOW_SCRIPTS", "").split(",") if g.strip()]
-    for p in sorted(d.rglob("*")):
-        if not p.is_file():
-            continue
-        t = EXT_TYPE.get(p.suffix.lower())
-        if t is None:
-            continue  # skip unknown types — don't guess
-        # Convention: conversation.json / *.conversation.json → transcript artifact.
-        if p.name == "conversation.json" or p.name.endswith(".conversation.json"):
-            t = "conversation"
-        raw = p.read_bytes()
-        if t in BINARY:
-            content, enc = base64.b64encode(raw).decode(), "base64"
-        else:
-            content, enc = raw.decode("utf-8", errors="replace"), "utf8"
-        art = {"name": p.name, "type": t, "encoding": enc, "content": content}
-        if t == "html" and any(fnmatch.fnmatch(p.name, g) for g in allow_globs):
-            art["allow_scripts"] = True
-        arts.append(art)
-    return arts
-
-
-def build_payload(c: dict, name: str | None) -> dict:
-    arts = collect_artifacts(c["artifacts_dir"])
-    g = git_context()
-    repo = g["repository"] or ""
-    default_name = name or git("log", "-1", "--pretty=%s") or Path.cwd().name
-    return {
-        "name": default_name,
-        "agent": os.environ.get("ARTIFACTBAY_AGENT", "claude-code"),
-        "model": os.environ.get("ARTIFACTBAY_MODEL"),
-        "project": c["project"] or (Path(repo).stem or None if repo else None),
-        "git": g,
-        "tags": [t for t in os.environ.get("ARTIFACTBAY_TAGS", "").split(",") if t],
-        "artifacts": arts,
-    }
-
-
-# ── commands ────────────────────────────────────────────────────────────────
-def cmd_doctor(c: dict) -> int:
-    print(f"ArtifactBay: {c['url']}")
-    try:
-        _, meta = _req("GET", f"{c['url']}/v0/meta")
-        print(f"  {C_OK}✓{C_RST} reachable (api v{meta.get('version')})")
+        Client(cfg).check()
+    except ApiError as e:
+        print(f"{C_ERR}✗ key rejected by {url}{C_RST} ({e.status})")
+        return 1
     except Exception as e:  # noqa: BLE001
-        print(f"  {C_ERR}✗ unreachable{C_RST} — {e}")
+        print(f"{C_ERR}✗ cannot reach {url}{C_RST} — {e}")
         return 1
-    if not c["key"]:
-        print(f"  {C_ERR}✗ ARTIFACTBAY_KEY not set{C_RST}")
-        return 1
-    try:
-        _req("GET", f"{c['url']}/v0/auth/check", key=c["key"])
-        print(f"  {C_OK}✓{C_RST} key valid (write)")
-    except urllib.error.HTTPError as e:
-        print(f"  {C_ERR}✗ key rejected{C_RST} ({e.code})")
-        return 1
-    arts = collect_artifacts(c["artifacts_dir"])
-    print(f"  {C_OK}✓{C_RST} {len(arts)} artifact(s) in {c['artifacts_dir']}/")
-    for a in arts:
-        print(f"      {C_DIM}{a['type']:<8} {a['name']}{C_RST}")
-    pend = list((c["state_dir"] / "pending").glob("*.json")) if (c["state_dir"] / "pending").is_dir() else []
-    if pend:
-        print(f"  {C_DIM}{len(pend)} queued push(es) pending — run `push --resume`{C_RST}")
+
+    path = write_user_config(url, key, agent=args.agent)
+    print(f"{C_OK}✓{C_RST} wrote {path}")
+    print(f"{C_DIM}  every project on this machine can now push — no per-project setup{C_RST}")
     return 0
 
 
-def _send(c: dict, payload: dict, idem: str) -> dict:
-    sid_file = c["state_dir"] / "session_id"
-    body = json.dumps(payload).encode()
-    if sid_file.is_file():  # known session → new version
-        sid = sid_file.read_text().strip()
-        try:
-            _, out = _req("POST", f"{c['url']}/v0/sessions/{sid}/versions", key=c["key"], body=body)
-            return out
-        except urllib.error.HTTPError as e:
-            if e.code != 404:
-                raise
-            # stale session_id (e.g. pointed at a different server or a reset DB) →
-            # fall through to create a fresh session instead of failing.
-    _, out = _req("POST", f"{c['url']}/v0/sessions", key=c["key"], body=body, idem=idem)
-    c["state_dir"].mkdir(exist_ok=True)
-    sid_file.write_text(out["id"])
-    return out
+def cmd_doctor(cfg: dict) -> int:
+    client = Client(cfg)
+    print(f"ArtifactBay: {cfg['url']}")
+    print(f"{C_DIM}  config: {USER_CONFIG if USER_CONFIG.is_file() else 'env only'}{C_RST}")
+    try:
+        meta = client.meta()
+        print(f"  {C_OK}✓{C_RST} reachable (api v{meta.get('version')})")
+        caps = meta.get("capabilities") or []
+        if caps:
+            print(f"{C_DIM}      capabilities: {', '.join(caps)}{C_RST}")
+        else:
+            print(f"{C_DIM}      older instance — incremental push/export unavailable{C_RST}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  {C_ERR}✗ unreachable{C_RST} — {e}")
+        return 1
+
+    if not cfg["key"]:
+        print(f"  {C_ERR}✗ no API key{C_RST} — run `artifactbay init`")
+        return 1
+    try:
+        client.check()
+        print(f"  {C_OK}✓{C_RST} key valid (write)")
+    except ApiError as e:
+        print(f"  {C_ERR}✗ key rejected{C_RST} ({e.status})")
+        return 1
+
+    arts = collect_artifacts(cfg["artifacts_dir"], cfg["allow_scripts"], cfg["redact"])
+    print(f"  {C_OK}✓{C_RST} {len(arts)} artifact(s) staged in {cfg['artifacts_dir']}/")
+    for a in arts:
+        print(f"      {C_DIM}{a['type']:<12} {a['name']}{C_RST}")
+    pending_dir = cfg["state_dir"] / "pending"
+    pending = list(pending_dir.glob("*.json")) if pending_dir.is_dir() else []
+    if pending:
+        print(f"  {C_DIM}{len(pending)} queued push(es) — run `artifactbay push --resume`{C_RST}")
+    return 0
 
 
-def _queue(c: dict, payload: dict, idem: str) -> Path:
-    pend = c["state_dir"] / "pending"
-    pend.mkdir(parents=True, exist_ok=True)
-    f = pend / f"{idem}.json"
-    f.write_text(json.dumps({"idem": idem, "payload": payload}))
-    return f
-
-
-def cmd_push(c: dict, name: str | None, dry: bool, resume: bool) -> int:
-    if resume:
-        pend = c["state_dir"] / "pending"
-        files = sorted(pend.glob("*.json")) if pend.is_dir() else []
+def cmd_push(cfg: dict, args: argparse.Namespace) -> int:
+    if args.resume:
+        pending_dir = cfg["state_dir"] / "pending"
+        files = sorted(pending_dir.glob("*.json")) if pending_dir.is_dir() else []
         if not files:
             print("nothing pending")
             return 0
@@ -191,7 +115,7 @@ def cmd_push(c: dict, name: str | None, dry: bool, resume: bool) -> int:
         for f in files:
             d = json.loads(f.read_text())
             try:
-                out = _send(c, d["payload"], d["idem"])
+                out = send(cfg, d["payload"], d["idem"])
                 f.unlink()
                 ok += 1
                 print(f"{C_OK}✓{C_RST} resumed → {out.get('url')}")
@@ -199,43 +123,122 @@ def cmd_push(c: dict, name: str | None, dry: bool, resume: bool) -> int:
                 print(f"{C_ERR}✗ still failing{C_RST} {f.name} — {e}")
         return 0 if ok == len(files) else 1
 
-    payload = build_payload(c, name)
-    if not payload["artifacts"]:
-        print(f"{C_DIM}no artifacts in {c['artifacts_dir']}/ — nothing to push{C_RST}")
+    # Explicit paths win; otherwise fall back to the staged directory.
+    if args.paths:
+        artifacts, skipped = collect_paths(args.paths, cfg["allow_scripts"], cfg["redact"])
+        for s in skipped:
+            print(f"{C_DIM}skipped {s}{C_RST}")
+    else:
+        artifacts = collect_artifacts(cfg["artifacts_dir"], cfg["allow_scripts"], cfg["redact"])
+
+    if not artifacts:
+        where = " ".join(args.paths) if args.paths else f"{cfg['artifacts_dir']}/"
+        print(f"{C_DIM}nothing to push from {where}{C_RST}")
         return 0
-    if dry:
-        preview = {**payload, "artifacts": [{**a, "content": f"<{len(a['content'])} chars>"}
-                                            for a in payload["artifacts"]]}
+
+    if args.dry_run:
+        preview = {
+            "name": args.name, "agent": cfg["agent"], "tags": cfg["tags"],
+            "artifacts": [{**a, "content": f"<{len(a['content'])} chars>"} for a in artifacts],
+        }
         print(json.dumps(preview, indent=2))
         return 0
-    if not c["key"]:
-        print(f"{C_ERR}ARTIFACTBAY_KEY not set{C_RST} — run `doctor`")
-        return 1
 
-    idem = uuid.uuid4().hex
-    try:
-        out = _send(c, payload, idem)
-        print(f"{C_OK}✓ pushed{C_RST} → {out.get('url')}")
+    result = push(cfg, args.name, artifacts)
+    if result["ok"]:
+        print(f"{C_OK}✓ pushed{C_RST} v{result['version']} → {result['url']}")
         return 0
-    except Exception as e:  # noqa: BLE001  — fail-open: queue, never crash the agent
-        f = _queue(c, payload, idem)
-        print(f"{C_ERR}✗ push failed{C_RST} — queued {f} (retry: push --resume)\n  {e}")
-        return 0  # exit 0 on purpose: must not break the agent's run
+    if result["reason"] == "no_key":
+        print(f"{C_ERR}no API key{C_RST} — run `artifactbay init`")
+        return 1
+    # Queued: exit 0 on purpose so a failed push never breaks the agent's run.
+    print(f"{C_ERR}✗ push failed{C_RST} — queued {result['queued_at']} "
+          f"(retry: artifactbay push --resume)\n  {result.get('error')}")
+    return 0
+
+
+def cmd_share(cfg: dict, args: argparse.Namespace) -> int:
+    try:
+        if args.artifact:
+            out = Client(cfg).share_artifact(args.id, rotate=args.rotate)
+        else:
+            out = Client(cfg).share_session(args.id, rotate=args.rotate)
+    except ApiError as e:
+        print(f"{C_ERR}✗ {e}{C_RST}")
+        return 1
+    print(out["url"])
+    return 0
+
+
+def cmd_ls(cfg: dict, args: argparse.Namespace) -> int:
+    try:
+        out = Client(cfg).list_sessions(q=args.q, limit=args.limit)
+    except ApiError as e:
+        print(f"{C_ERR}✗ {e}{C_RST}")
+        return 1
+    for s in out.get("sessions", []):
+        tags = f" {C_DIM}[{','.join(s['tags'])}]{C_RST}" if s.get("tags") else ""
+        print(f"{s['id'][:8]}  v{s['version']:<3} {s['name'][:52]:<52} "
+              f"{C_DIM}{s['artifact_count']} artifact(s){C_RST}{tags}")
+    print(f"{C_DIM}{out.get('total', 0)} total{C_RST}")
+    return 0
+
+
+def cmd_mcp() -> int:
+    import artifactbay_mcp
+
+    return artifactbay_mcp.serve()
 
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="artifactbay")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("doctor")
-    pp = sub.add_parser("push")
-    pp.add_argument("--name")
-    pp.add_argument("--dry-run", action="store_true")
-    pp.add_argument("--resume", action="store_true")
+
+    p_init = sub.add_parser("init", help="write machine-wide config")
+    p_init.add_argument("--url")
+    p_init.add_argument("--key")
+    p_init.add_argument("--agent")
+
+    sub.add_parser("doctor", help="check connectivity, auth and staged artifacts")
+
+    p_push = sub.add_parser("push", help="push artifacts")
+    p_push.add_argument("paths", nargs="*", help="files or directories (default: staged dir)")
+    p_push.add_argument("--name")
+    p_push.add_argument("--dry-run", action="store_true")
+    p_push.add_argument("--resume", action="store_true")
+    p_push.add_argument("--no-redact", action="store_true",
+                        help="skip client-side secret stripping")
+
+    p_share = sub.add_parser("share", help="mint a capability link")
+    p_share.add_argument("id")
+    p_share.add_argument("--artifact", action="store_true", help="share one artifact, not a session")
+    p_share.add_argument("--rotate", action="store_true")
+
+    p_ls = sub.add_parser("ls", help="list sessions")
+    p_ls.add_argument("-q", help="search query")
+    p_ls.add_argument("--limit", type=int, default=20)
+
+    sub.add_parser("mcp", help="run the MCP server on stdio")
+
     a = p.parse_args(argv)
-    c = cfg()
+    if a.cmd == "init":
+        return cmd_init(a)
+    if a.cmd == "mcp":
+        return cmd_mcp()
+
+    cfg = load_config()
+    if getattr(a, "no_redact", False):
+        cfg["redact"] = False
+
     if a.cmd == "doctor":
-        return cmd_doctor(c)
-    return cmd_push(c, a.name, a.dry_run, a.resume)
+        return cmd_doctor(cfg)
+    if a.cmd == "push":
+        return cmd_push(cfg, a)
+    if a.cmd == "share":
+        return cmd_share(cfg, a)
+    if a.cmd == "ls":
+        return cmd_ls(cfg, a)
+    return 1
 
 
 if __name__ == "__main__":
