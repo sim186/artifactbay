@@ -75,6 +75,49 @@ sequenceDiagram
 
 ## 🚀 Getting Started
 
+### Install (one command)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sim186/artifactbay/main/install.sh | sh
+```
+
+Starts the stack from prebuilt images with freshly generated secrets, installs the
+`artifactbay` CLI and MCP server, points them at the new instance, and registers the MCP
+server with Claude Code if it's installed. Nothing to clone, no `pip install`. It prints
+the dashboard URL and the generated admin password when it's done.
+
+Needs Docker (for the server) and Python 3 (for the CLI/MCP). Re-running is safe —
+existing secrets are never regenerated.
+
+<details>
+<summary>Options</summary>
+
+```bash
+# Client only — point your agents at an instance someone else runs
+curl -fsSL .../install.sh | sh -s -- --client-only --url https://artifacts.example.com --key ab_...
+
+# Server only, on a different port, behind your own TLS proxy
+curl -fsSL .../install.sh | sh -s -- --server-only --port 9000 --base-url https://artifacts.example.com
+```
+
+| Flag | |
+|:---|:---|
+| `--server-only` / `--client-only` | install one half |
+| `--dir PATH` | where the stack lives (default `~/artifactbay`) |
+| `--port N` | host port for the dashboard (default `8080`) |
+| `--base-url URL` | public origin, when behind a reverse proxy |
+| `--url` / `--key` | existing instance for the client to use |
+| `--bin-dir PATH` | where `artifactbay` is linked (default `~/.local/bin`) |
+| `--ref REF` | install from a branch or tag (default `main`) |
+| `--no-mcp` | skip agent MCP registration |
+
+Piping a script into a shell is worth reading first: `curl -fsSL .../install.sh | less`.
+
+</details>
+
+The sections below are the manual equivalents — for development, or when you want to see
+every step.
+
 ### Prerequisites
 - [Docker](https://www.docker.com/) and Docker Compose
 - Or Python >= 3.14 (with `uv`) and Node.js for running natively
@@ -100,7 +143,7 @@ docker compose -p artifactbay-full -f docker-compose.full.yml down -v
 ```
 
 ### Self-Hosting From Prebuilt Images (no source checkout)
-Every tagged release publishes multi-arch (amd64 + arm64) images to GHCR — `ghcr.io/sim186/artifactbay-backend` and `-web`. To deploy without cloning the repo:
+Every tagged release publishes multi-arch (amd64 + arm64) images to GHCR — `ghcr.io/sim186/artifactbay-backend` and `-web`. `install.sh --server-only` does all of the following for you; the manual version:
 ```bash
 # Grab the standalone compose file + env template
 curl -O https://raw.githubusercontent.com/sim186/artifactbay/main/docker-compose.deploy.yml
@@ -137,7 +180,14 @@ For a fast inner-loop dev experience with hot-reloading:
 
 ## 🤖 Connecting Your Agents
 
-Configure **once per machine**, not once per project.
+Configure **once per machine**, not once per project. The installer does this for you:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sim186/artifactbay/main/install.sh | \
+  sh -s -- --client-only --url https://artifacts.example.com --key ab_...
+```
+
+Or by hand, from a checkout:
 
 ```bash
 # 1. Machine-wide config — writes ~/.config/artifactbay/config.json (chmod 600)

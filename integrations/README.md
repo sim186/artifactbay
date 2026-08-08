@@ -17,6 +17,17 @@ built instead of rebuilding it.
 
 ## One-time setup
 
+The installer does all three steps below — copies the engine to
+`~/.local/share/artifactbay`, links `artifactbay` onto PATH, writes the config, and
+registers the MCP server with Claude Code:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sim186/artifactbay/main/install.sh | \
+  sh -s -- --client-only --url https://artifacts.example.com --key ab_...
+```
+
+By hand, from a checkout:
+
 ```bash
 # 1. Machine-wide config — every project inherits it, none needs its own.
 python3 artifactbay_cli.py init --url https://artifacts.example.com --key ab_...
